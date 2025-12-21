@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>QuickSort</AssemblyName>
+    <Description>made by Asta</Description>
+    <Version>1.2.1</Version>
+    <LangVersion>Preview</LangVersion>
+    <Nullable>enable</Nullable>
+    <RestoreAdditionalProjectSources>
+      https://api.nuget.org/v3/index.json;
+      https://nuget.bepinex.dev/v3/index.json
+    </RestoreAdditionalProjectSources>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="BepInEx.Analyzers" Version="1.*" PrivateAssets="all" />
+    <PackageReference Include="BepInEx.AssemblyPublicizer.MSBuild" Version="0.4.2" PrivateAssets="all" />
+    <PackageReference Include="BepInEx.Core" Version="5.*" />
+    <PackageReference Include="BepInEx.PluginInfoProps" Version="2.1.0" />
+    <PackageReference Include="UnityEngine.Modules" Version="6000.0.5" IncludeAssets="compile" />
+
+    <Reference Include="0Harmony" HintPath="C:\Users\Win10\AppData\Roaming\Thunderstore Mod Manager\DataFolder\LethalCompany\profiles\van\BepInEx\core\0Harmony.dll" Publicize="true"/>
+    <Reference Include="BepInEx" HintPath="C:\Users\Win10\AppData\Roaming\Thunderstore Mod Manager\DataFolder\LethalCompany\profiles\van\BepInEx\core\BepInEx.dll" Publicize="true"/>
+    <Reference Include="BepInEx.Harmony" HintPath="C:\Users\Win10\AppData\Roaming\Thunderstore Mod Manager\DataFolder\LethalCompany\profiles\van\BepInEx\core\BepInEx.Harmony.dll" Publicize="true"/>
+
+    <Reference Include="Assembly-CSharp" HintPath="c:/Program Files (x86)/Steam/steamapps/common/Lethal Company/Lethal Company_Data/Managed/Assembly-CSharp.dll" Publicize="true" />
+    <Reference Include="Unity.InputSystem" HintPath="c:/Program Files (x86)/Steam/steamapps/common/Lethal Company/Lethal Company_Data/Managed/Unity.InputSystem.dll" Publicize="true" />
+    <Reference Include="Unity.Netcode.Runtime" HintPath="c:/Program Files (x86)/Steam/steamapps/common/Lethal Company/Lethal Company_Data/Managed/Unity.Netcode.Runtime.dll" Publicize="true" />
+    <Reference Include="Unity.TextMeshPro" HintPath="c:/Program Files (x86)/Steam/steamapps/common/Lethal Company/Lethal Company_Data/Managed/Unity.TextMeshPro.dll" Publicize="true" />
+    <Reference Include="UnityEngine.UI" HintPath="c:/Program Files (x86)/Steam/steamapps/common/Lethal Company/Lethal Company_Data/Managed/UnityEngine.UI.dll" Publicize="true" />
+    <Reference Include="UnityEngine.IMGUIModule" HintPath="c:/Program Files (x86)/Steam/steamapps/common/Lethal Company/Lethal Company_Data/Managed/UnityEngine.IMGUIModule.dll" Publicize="true" />
+    <Reference Include="baer1.ChatCommandAPI" HintPath="C:\Users\Win10\AppData\Roaming\Thunderstore Mod Manager\DataFolder\LethalCompany\profiles\van guest and visual\BepInEx\plugins\baer1-ChatCommandAPI\baer1.ChatCommandAPI.dll" Publicize="true" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework.TrimEnd(`0123456789`))' == 'net'">
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.2" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

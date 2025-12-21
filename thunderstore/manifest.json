@@ -1,0 +1,10 @@
+{
+    "name": "QuickSort",
+    "version_number": "0.0.1",
+    "website_url": "https://github.com/P-Asta/lc-quicksort",
+    "description": "A faster version of scrap magic's sort?",
+    "dependencies": [
+      "BepInEx-BepInExPack-5.4.2100",
+      "baer1-ChatCommandAPI-0.3.1"
+    ]
+  }
