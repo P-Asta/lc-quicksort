@@ -1,2 +1,9 @@
 # Quick Sort
-Did you make scrap magic's sort a little faster?
+
+Lethal Company's item sorting mod
+
+![alt text](asset/image.png)
+
+## coomand
+
+- `/sort`: item sort
