@@ -1,6 +1,6 @@
 {
   "name": "QuickSort",
-  "version_number": "0.0.2",
+  "version_number": "0.0.3",
   "website_url": "https://github.com/P-Asta/lc-quicksort",
   "description": "Lethal Company's item sorting mod",
   "dependencies": [

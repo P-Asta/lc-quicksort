@@ -35,19 +35,19 @@ namespace QuickSort
 
         private void Awake()
         {
-            sortOriginX = Plugin.config.Bind<float>("Sorter", "sortOriginX", -4.5f, 
+            sortOriginX = Plugin.config.Bind<float>("Sorter", "sortOriginX", -2.8f,
                 "X coordinate of the origin position for sorting items (relative to ship)");
-            sortOriginY = Plugin.config.Bind<float>("Sorter", "sortOriginY", 0.5f, 
+            sortOriginY = Plugin.config.Bind<float>("Sorter", "sortOriginY", 0.5f,
                 "Y coordinate of the origin position for sorting items (relative to ship)");
-            sortOriginZ = Plugin.config.Bind<float>("Sorter", "sortOriginZ", -4.8f, 
+            sortOriginZ = Plugin.config.Bind<float>("Sorter", "sortOriginZ", -4.8f,
                 "Z coordinate of the origin position for sorting items (relative to ship)");
-            itemSpacing = Plugin.config.Bind<float>("Sorter", "itemSpacing", 1f, 
+            itemSpacing = Plugin.config.Bind<float>("Sorter", "itemSpacing", 1f,
                 "Spacing between items horizontally");
-            rowSpacing = Plugin.config.Bind<float>("Sorter", "rowSpacing", 0.8f, 
+            rowSpacing = Plugin.config.Bind<float>("Sorter", "rowSpacing", 0.8f,
                 "Spacing between rows vertically");
-            itemsPerRow = Plugin.config.Bind<int>("Sorter", "itemsPerRow", 5, 
+            itemsPerRow = Plugin.config.Bind<int>("Sorter", "itemsPerRow", 7,
                 "Number of items per row");
-            skippedItems = Plugin.config.Bind<string>("Sorter", "skippedItems", "body, clipboard, sticky_note, boombox", 
+            skippedItems = Plugin.config.Bind<string>("Sorter", "skippedItems", "body, clipboard, sticky_note, boombox",
                 "Which items should be skipped when organizing");
 
             // When there are too many ITEM TYPES, we don't push further into the ship (door/walls).
@@ -129,7 +129,7 @@ namespace QuickSort
 
             // Group items by name
             Dictionary<string, List<GrabbableObject>> groupedItems = new Dictionary<string, List<GrabbableObject>>();
-            
+
             foreach (GrabbableObject item in scrap)
             {
                 if (ShouldSkip(item))
@@ -210,7 +210,7 @@ namespace QuickSort
                         pileZ = (r - (rows - 1) / 2f) * pileSpacing;
                         pileY = layer * pileLayerHeight;
                     }
-                    
+
                     // Final ship-local target:
                     // - X/Z grid around pileCenterLocal
                     // - Y starts from the ground at pile center + item verticalOffset, then layers stack upward
@@ -315,7 +315,7 @@ namespace QuickSort
 
         private bool ShouldBreak(GrabbableObject item)
         {
-            return !inProgress || !Ship.Stationary || 
+            return !inProgress || !Ship.Stationary ||
                    (Player.Local != null && (Player.Local.beamOutParticle.isPlaying || Player.Local.beamUpParticle.isPlaying));
         }
 
@@ -371,9 +371,9 @@ namespace QuickSort
         public override bool Invoke(string[] args, Dictionary<string, string> kwargs, out string? error)
         {
             error = null;
-            
+
             QuickSort.Log.Info($"SortCommand.Invoke called with args: [{string.Join(", ", args)}]");
-            
+
             if (args.Length > 0 && args[0] == "help")
             {
                 ChatCommandAPI.ChatCommandAPI.Print(Description);
@@ -439,7 +439,7 @@ namespace QuickSort
                     return false;
                 }
             }
-            
+
             QuickSort.Log.Info("SortCommand executing...");
             sorter.CategorizeItems();
             Log.ConfirmSound();
