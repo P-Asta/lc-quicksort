@@ -1,7 +1,10 @@
 ## QuickSort (pasta.quicksort)
+
+**English(Support)** | [**한국어**](https://github.com/p-asta/lc-quicksort/blob/main/docs/README-kr.md)
 Ship item sorting + quick move commands for Lethal Company.
 
 ## Commands
+- **Tip**: If a command shows **`[itemName]`**, the name is optional — if you omit it, the command will use the **item you are currently holding** (if any).
 - **`/sort`**: Full sort (sort everything in the ship).
   - Uses `skippedItems` as the skip list for full sort.
 - **`/sort -a`**: Full sort, but **IGNORE `skippedItems`** (sort absolutely everything that is eligible).
@@ -9,9 +12,10 @@ Ship item sorting + quick move commands for Lethal Company.
   - If an item type has a saved `/sort set` position, it will **NOT** be skipped even if it matches `skippedItems`.
   - Otherwise (no saved position), `skippedItems` still applies.
   - **Note**: `-a` and `-b` cannot be combined (and `/sort -ab` / `/sort -ba` are rejected).
-- **`/sort <itemName>`**: Move that item type to your current position (e.g. `/sort cash_register` or `/sort kitchen knife`).
+- **`/sort <itemName>`**: Move that item type to your current position (e.g. `/sort cash_register`, `/sort weed killer` or `/sort wee`).
   - This explicit move **ignores skip lists**, so it works even if the type is in `skippedItems`.
 - **`/sort <number>`**: Move the item type bound to that number (e.g. `/sort 1`).
+- **`/pile [itemName]`**: Like `/sort <itemName>` (pull a specific type to you), but **if omitted it uses your held item type and also moves the held item**.
 
 ### Skip list (skippedItems)
 Edit `skippedItems` in-game:
@@ -42,9 +46,9 @@ Use bindings:
 - **`/sort meds`** (alias binding)
 
 ### Saved positions
-- **`/sort set [itemName]`**: Save this type's sort position to your current position (name optional if holding).
-- **`/ss [itemName]`**: same as `/sort set ...`
-- **`/sort reset [itemName]`**: Delete saved sort position (name optional if holding).
+- **`/sort set [itemName]`**: Save this type's sort position to your current position (**partial match supported**).
+- **`/ss [itemName]`**: same as `/sort set ...` (**partial match supported**).
+- **`/sort reset [itemName]`**: Delete saved sort position.
 - **`/sort positions`**: List saved sort positions.
 
 ## Config / files

@@ -48,16 +48,16 @@ namespace QuickSort
                         new PositionEntry
                         {
                             item = "soccer_ball",
-                            x = 9.085655f,
-                            y = -1.24895f,
-                            z = -8.23046f
+                            x = 9f,
+                            y = -1.2f,
+                            z = -8.4f
                         },
                         new PositionEntry
                         {
                             item = "whoopie_cushion",
-                            x = 9.062115f,
-                            y = 0.110211849f,
-                            z = -6.09901428f
+                            x = 9.4f,
+                            y = 1.81f,
+                            z = -6.3f
                         }
                     }
                 };
