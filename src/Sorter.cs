@@ -20,7 +20,8 @@ namespace QuickSort
         public ConfigEntry<float> itemSpacing;
         public ConfigEntry<float> rowSpacing;
         public ConfigEntry<int> itemsPerRow;
-        public ConfigEntry<string> skippedItems;
+        public ConfigEntry<string> skippedItems; // legacy name: now used for SCRAP skip list
+        public ConfigEntry<string> skippedNonScrapItems; // shop/tools skip list
         public ConfigEntry<float> sortAreaWidth;
         public ConfigEntry<float> sortAreaDepth;
         public ConfigEntry<float> wallPadding;
@@ -35,20 +36,25 @@ namespace QuickSort
 
         private void Awake()
         {
-            sortOriginX = Plugin.config.Bind<float>("Sorter", "sortOriginX", -2.8f,
+            sortOriginX = Plugin.config.Bind<float>("Sorter", "sortOriginX", -4.5f, 
                 "X coordinate of the origin position for sorting items (relative to ship)");
-            sortOriginY = Plugin.config.Bind<float>("Sorter", "sortOriginY", 0.5f,
+            sortOriginY = Plugin.config.Bind<float>("Sorter", "sortOriginY", 0.5f, 
                 "Y coordinate of the origin position for sorting items (relative to ship)");
-            sortOriginZ = Plugin.config.Bind<float>("Sorter", "sortOriginZ", -4.8f,
+            sortOriginZ = Plugin.config.Bind<float>("Sorter", "sortOriginZ", -4.8f, 
                 "Z coordinate of the origin position for sorting items (relative to ship)");
-            itemSpacing = Plugin.config.Bind<float>("Sorter", "itemSpacing", 1f,
+            itemSpacing = Plugin.config.Bind<float>("Sorter", "itemSpacing", 1f, 
                 "Spacing between items horizontally");
-            rowSpacing = Plugin.config.Bind<float>("Sorter", "rowSpacing", 0.8f,
+            rowSpacing = Plugin.config.Bind<float>("Sorter", "rowSpacing", 0.8f, 
                 "Spacing between rows vertically");
-            itemsPerRow = Plugin.config.Bind<int>("Sorter", "itemsPerRow", 7,
+            itemsPerRow = Plugin.config.Bind<int>("Sorter", "itemsPerRow", 5, 
                 "Number of items per row");
-            skippedItems = Plugin.config.Bind<string>("Sorter", "skippedItems", "body, clipboard, sticky_note, boombox",
-                "Which items should be skipped when organizing");
+            // NOTE: This setting historically applied to all items, which caused confusion and made
+            // shop items (shovel, pro_flashlight, etc.) appear "unsortable" if users added them here.
+            // It now applies ONLY to scrap items.
+            skippedItems = Plugin.config.Bind<string>("Sorter", "skippedItems", "body, clipboard, sticky_note, boombox, shovel, jetpack, flashlight, pro_flashlight, key, stun_grenade, lockpicker, mapper, extension_ladder, tzp_inhalant, walkie_talkie, zap_gun, kitchen_knife, weed_killer, rader_booster",
+                "SCRAP skip list (comma-separated, substring match). Only applies to scrap items.");
+            skippedNonScrapItems = Plugin.config.Bind<string>("Sorter", "skippedNonScrapItems", "",
+                "Non-scrap (shop/tools) skip list (comma-separated, substring match). Leave empty to sort shop items too.");
 
             // When there are too many ITEM TYPES, we don't push further into the ship (door/walls).
             // Instead we lift the next "type page" up on Y and restart from the first slot.
@@ -80,7 +86,7 @@ namespace QuickSort
         {
             if (args.Length > 0 && args[0] == "help")
             {
-                Log.Chat("Usage: /sort [-r|-redo] [help]", "FFFF00");
+                Log.Chat("Usage: /sort [help]", "FFFF00");
                 return;
             }
 
@@ -96,10 +102,9 @@ namespace QuickSort
                 return;
             }
 
-            bool force = args.Contains("-r") || args.Contains("-redo");
             CategorizeItems();
             Log.ConfirmSound();
-            StartCoroutine(SortItems(force));
+            StartCoroutine(SortItems(force: false));
         }
 
         public IEnumerator SortItems(bool force)
@@ -129,10 +134,10 @@ namespace QuickSort
 
             // Group items by name
             Dictionary<string, List<GrabbableObject>> groupedItems = new Dictionary<string, List<GrabbableObject>>();
-
+            
             foreach (GrabbableObject item in scrap)
             {
-                if (ShouldSkip(item))
+                if (ShouldSkipFullSort(item))
                     continue;
 
                 string itemName = item.Name();
@@ -143,25 +148,45 @@ namespace QuickSort
                 groupedItems[itemName].Add(item);
             }
 
-            // Create layout: bounded to a configurable ship-local rectangle to prevent wall clipping.
-            // Vector3: x = offsetX, y = typeLayerY, z = offsetZ
-            Dictionary<string, Vector3> layout = CreateLayout(groupedItems.Keys.ToList());
+            // Create layout for non-custom-position item types only.
+            // If a type has a saved position override, it should NOT consume a slot in the normal layout,
+            // otherwise the layout will "skip" a spot (empty hole) where that type would have been.
+            HashSet<string>? reservedTypes = null;
+            var savedPositions = SortPositions.ListAll(out var posListError);
+            if (posListError != null)
+            {
+                Log.Warning(posListError);
+            }
+            else
+            {
+                reservedTypes = new HashSet<string>(savedPositions.Select(p => p.itemKey));
+            }
 
-            int itemIndex = 0;
+            // Vector3: x = offsetX, y = typeLayerY, z = offsetZ
+            Dictionary<string, Vector3> layout = CreateLayout(groupedItems.Keys.ToList(), reservedTypes);
+
             foreach (var group in groupedItems)
             {
                 string itemName = group.Key;
                 List<GrabbableObject> items = group.Value;
 
-                if (!layout.ContainsKey(itemName))
-                    continue;
-
-                Vector3 typePos = layout[itemName];
+                // Resolve per-type layout OR saved per-type position override.
+                Vector3 typePos = layout.ContainsKey(itemName) ? layout[itemName] : Vector3.zero;
+                bool hasCustomPos = SortPositions.TryGet(itemName, out Vector3 customShipLocal, out string? posError);
+                if (posError != null)
+                {
+                    Log.Warning(posError);
+                }
 
                 // Determine the "lowest" (ground) Y once for this pile, then build layers upward from it.
                 // This avoids per-item raycasts hitting other items and causing upward drift.
                 const int LAYER_MASK = 268437761; // Copied from GrabbableObject.GetItemFloorPosition via LethalShipSort
-                Vector3 pileCenterLocal = originLocal + new Vector3(typePos.x, 0f, typePos.z);
+                Vector3 pileCenterLocal = hasCustomPos
+                    ? new Vector3(customShipLocal.x, 0f, customShipLocal.z)
+                    : originLocal + new Vector3(typePos.x, 0f, typePos.z);
+                // If a custom position is set, we treat it as an absolute target (no layout-based Y paging).
+                float customYOffset = hasCustomPos ? customShipLocal.y : 0f;
+                float typeLayerYOffset = hasCustomPos ? 0f : typePos.y;
                 float groundYLocal = pileCenterLocal.y;
                 {
                     Vector3 rayStartCenter = ship.transform.TransformPoint(pileCenterLocal + Vector3.up * 2f);
@@ -210,13 +235,13 @@ namespace QuickSort
                         pileZ = (r - (rows - 1) / 2f) * pileSpacing;
                         pileY = layer * pileLayerHeight;
                     }
-
+                    
                     // Final ship-local target:
                     // - X/Z grid around pileCenterLocal
                     // - Y starts from the ground at pile center + item verticalOffset, then layers stack upward
                     Vector3 targetLocal = new Vector3(
                         pileCenterLocal.x + pileX,
-                        groundYLocal + (item.itemProperties.verticalOffset - 0.05f) + typePos.y + pileY,
+                        groundYLocal + (item.itemProperties.verticalOffset - 0.05f) + (typeLayerYOffset + customYOffset) + pileY,
                         pileCenterLocal.z + pileZ
                     );
 
@@ -229,7 +254,7 @@ namespace QuickSort
 
                     yield return GrabbableRetry(item);
 
-                    if (!ShouldSkip(item))
+                    if (!ShouldSkipFullSort(item))
                     {
                         // Teleport item into place (server will apply via ServerRpc)
                         item.floorYRot = -1;
@@ -247,14 +272,380 @@ namespace QuickSort
                     }
                 }
 
-                itemIndex++;
             }
 
             Log.Chat("Sorting complete!", "00FF00");
             inProgress = false;
         }
 
-        private Dictionary<string, Vector3> CreateLayout(List<string> itemNames)
+        public bool TryStartGatherByQuery(string query, bool force, out string? error)
+        {
+            error = null;
+
+            if (!CanSort)
+            {
+                error = "Must be in orbit or stationary at company";
+                return false;
+            }
+
+            if (inProgress)
+            {
+                error = "Operation in progress";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(query))
+            {
+                error = "Missing item name";
+                return false;
+            }
+
+            CategorizeItems();
+            if (scrap == null || scrap.Count == 0)
+            {
+                error = "No items found in ship";
+                return false;
+            }
+
+            // Build groups once for name resolution
+            Dictionary<string, List<GrabbableObject>> grouped = new Dictionary<string, List<GrabbableObject>>();
+            foreach (var item in scrap)
+            {
+                if (ShouldSkip(item)) continue;
+                string key = item.Name();
+                if (!grouped.TryGetValue(key, out var list))
+                {
+                    list = new List<GrabbableObject>();
+                    grouped[key] = list;
+                }
+                list.Add(item);
+            }
+
+            string q = Extensions.NormalizeName(query);
+            if (string.IsNullOrWhiteSpace(q))
+            {
+                error = "Invalid item name";
+                return false;
+            }
+
+            string? resolved = null;
+
+            if (grouped.ContainsKey(q))
+            {
+                resolved = q;
+            }
+            else
+            {
+                // Fuzzy match: allow partial matches
+                var keys = grouped.Keys.ToList();
+                // Also match "loose" names that ignore underscores so users can type e.g. "weedkiller" for "weed_killer"
+                // or "jet pack" for "jetpack" depending on the game's internal naming.
+                string qLoose = q.Replace("_", "");
+                var matches = keys
+                    .Where(k =>
+                    {
+                        if (k.Contains(q) || q.Contains(k)) return true;
+                        string kLoose = k.Replace("_", "");
+                        return kLoose.Contains(qLoose) || qLoose.Contains(kLoose);
+                    })
+                    .Distinct()
+                    .ToList();
+
+                if (matches.Count == 1)
+                {
+                    resolved = matches[0];
+                }
+                else if (matches.Count == 0)
+                {
+                    error = $"No item match for '{query}'.";
+                    return false;
+                }
+                else
+                {
+                    // Too many matches: tell user candidates
+                    string candidates = string.Join(", ", matches.Take(8));
+                    if (matches.Count > 8) candidates += ", ...";
+                    error = $"Ambiguous item '{query}'. Matches: {candidates}";
+                    return false;
+                }
+            }
+
+            if (!TryGetPlayerShipLocalTarget(out Vector3 targetLocal, out error))
+                return false;
+
+            // Convert player's ship-local Y to a ground-relative Y offset (prevents double-adding ground).
+            if (!TryGetGroundYLocalAt(shipLocalXZ: targetLocal, out float groundYLocal, out string? groundError))
+            {
+                error = groundError;
+                return false;
+            }
+
+            Vector3 targetWithOffset = new Vector3(targetLocal.x, targetLocal.y - groundYLocal, targetLocal.z);
+            StartCoroutine(MoveItemsOfTypeToPosition(resolved, targetWithOffset, force, announce: true));
+            return true;
+        }
+
+        public bool TrySetAndMoveTypeToPlayer(string? queryOrNull, bool force, out string? error)
+        {
+            error = null;
+
+            if (!CanSort)
+            {
+                error = "Must be in orbit or stationary at company";
+                return false;
+            }
+
+            if (inProgress)
+            {
+                error = "Operation in progress";
+                return false;
+            }
+
+            // Determine item key: explicit name or held item type
+            string itemKey;
+            if (!string.IsNullOrWhiteSpace(queryOrNull))
+            {
+                itemKey = Extensions.NormalizeName(queryOrNull);
+            }
+            else
+            {
+                var held = Player.Local != null ? Player.Local.currentlyHeldObjectServer as GrabbableObject : null;
+                if (held == null)
+                {
+                    error = "No item name provided and no held item.";
+                    return false;
+                }
+                itemKey = held.Name();
+            }
+
+            if (string.IsNullOrWhiteSpace(itemKey))
+            {
+                error = "Invalid item name";
+                return false;
+            }
+
+            if (!TryGetPlayerShipLocalTarget(out Vector3 targetLocal, out error))
+                return false;
+
+            // Save as ground-relative Y offset, not absolute ship-local Y (fixes "set goes to weird place").
+            if (!TryGetGroundYLocalAt(shipLocalXZ: targetLocal, out float groundYLocal, out string? groundError))
+            {
+                error = groundError;
+                return false;
+            }
+
+            Vector3 savedPos = new Vector3(targetLocal.x, targetLocal.y - groundYLocal, targetLocal.z);
+            if (!SortPositions.Set(itemKey, savedPos, out error))
+                return false;
+
+            CategorizeItems();
+            Log.ConfirmSound();
+            // Also move to the exact saved position (ground-relative offset)
+            StartCoroutine(MoveItemsOfTypeToPosition(itemKey, savedPos, force, announce: true));
+            return true;
+        }
+
+        private bool TryGetPlayerShipLocalTarget(out Vector3 shipLocalTarget, out string? error)
+        {
+            shipLocalTarget = default;
+            error = null;
+
+            if (Player.Local == null)
+            {
+                error = "Local player not ready yet";
+                return false;
+            }
+
+            GameObject ship = GameObject.Find("Environment/HangarShip");
+            if (ship == null)
+            {
+                error = "Ship not found";
+                return false;
+            }
+
+            // Slightly in front of the player to avoid piling inside the player collider.
+            Vector3 world = Player.Local.transform.position + Player.Local.transform.forward * 0.75f;
+            shipLocalTarget = ship.transform.InverseTransformPoint(world);
+            return true;
+        }
+
+        private bool TryGetGroundYLocalAt(Vector3 shipLocalXZ, out float groundYLocal, out string? error)
+        {
+            groundYLocal = 0f;
+            error = null;
+
+            GameObject ship = GameObject.Find("Environment/HangarShip");
+            if (ship == null)
+            {
+                error = "Ship not found";
+                return false;
+            }
+
+            const int LAYER_MASK = 268437761;
+            Vector3 pileCenterLocal = new Vector3(shipLocalXZ.x, 0f, shipLocalXZ.z);
+            Vector3 rayStartCenter = ship.transform.TransformPoint(pileCenterLocal + Vector3.up * 2f);
+            if (Physics.Raycast(rayStartCenter, Vector3.down, out RaycastHit hitCenter, 80f, LAYER_MASK, QueryTriggerInteraction.Ignore))
+            {
+                groundYLocal = ship.transform.InverseTransformPoint(hitCenter.point).y;
+                return true;
+            }
+
+            // Fallback: assume y=0 in ship space if raycast fails
+            groundYLocal = 0f;
+            return true;
+        }
+
+        private IEnumerator MoveItemsOfTypeToPosition(string itemKey, Vector3 targetCenterShipLocal, bool force, bool announce)
+        {
+            inProgress = true;
+            if (announce)
+            {
+                Log.Chat($"Moving '{itemKey}' to your position... Press [Escape] to cancel", "FFFF00");
+            }
+
+            if (Player.Local == null)
+            {
+                Log.NotifyPlayer("Sorter Error", "Local player not ready yet", isWarning: true);
+                inProgress = false;
+                yield break;
+            }
+
+            GameObject ship = GameObject.Find("Environment/HangarShip");
+            if (ship == null)
+            {
+                Log.NotifyPlayer("Sorter Error", "Ship not found", isWarning: true);
+                inProgress = false;
+                yield break;
+            }
+
+            // Group items by name (same as full sort) so filtering uses stable keys.
+            Dictionary<string, List<GrabbableObject>> groupedItems = new Dictionary<string, List<GrabbableObject>>();
+            foreach (GrabbableObject item in scrap)
+            {
+                if (ShouldSkip(item)) continue;
+                string name = item.Name();
+                if (!groupedItems.TryGetValue(name, out var list))
+                {
+                    list = new List<GrabbableObject>();
+                    groupedItems[name] = list;
+                }
+                list.Add(item);
+            }
+
+            if (!groupedItems.TryGetValue(itemKey, out var items) || items.Count == 0)
+            {
+                // Still allow moving the held item if it matches (sort set without name request)
+                items = new List<GrabbableObject>();
+            }
+
+            // Pile center is EXACTLY the requested ship-local position (x/z); y is treated as an extra offset.
+            Vector3 pileCenterLocal = new Vector3(targetCenterShipLocal.x, 0f, targetCenterShipLocal.z);
+            float extraYOffset = targetCenterShipLocal.y;
+
+            // Determine pile ground once (same as full sort)
+            const int LAYER_MASK = 268437761;
+            float groundYLocal = pileCenterLocal.y;
+            {
+                Vector3 rayStartCenter = ship.transform.TransformPoint(pileCenterLocal + Vector3.up * 2f);
+                if (Physics.Raycast(rayStartCenter, Vector3.down, out RaycastHit hitCenter, 80f, LAYER_MASK, QueryTriggerInteraction.Ignore))
+                {
+                    groundYLocal = ship.transform.InverseTransformPoint(hitCenter.point).y;
+                }
+            }
+
+            // If the player is holding an item of this type, include it and move it too.
+            GrabbableObject? held = Player.Local != null ? Player.Local.currentlyHeldObjectServer as GrabbableObject : null;
+            List<GrabbableObject> itemsToMove = new List<GrabbableObject>(items);
+            if (held != null && held.Name() == itemKey && !itemsToMove.Contains(held))
+            {
+                itemsToMove.Insert(0, held);
+            }
+
+            int moved = 0;
+            for (int stackIndex = 0; stackIndex < itemsToMove.Count; stackIndex++)
+            {
+                GrabbableObject item = itemsToMove[stackIndex];
+                if (ShouldBreak(item))
+                {
+                    Log.NotifyPlayer("Sorter Stopping", "Operation cancelled or ship is in motion", isWarning: true);
+                    inProgress = false;
+                    yield break;
+                }
+
+                float pileX = 0f;
+                float pileZ = 0f;
+                float pileY;
+
+                if (stackSameTypeTogether.Value)
+                {
+                    pileY = stackIndex * Mathf.Max(0f, sameTypeStackStepY.Value);
+                }
+                else
+                {
+                    int cols = Mathf.Max(1, itemsPerRow.Value);
+                    int rows = cols;
+                    int perLayer = cols * rows;
+                    int layer = stackIndex / perLayer;
+                    int inLayer = stackIndex % perLayer;
+                    int r = inLayer / cols;
+                    int c = inLayer % cols;
+
+                    const float pileSpacing = 0.10f;
+                    const float pileLayerHeight = 0.07f;
+
+                    pileX = (c - (cols - 1) / 2f) * pileSpacing;
+                    pileZ = (r - (rows - 1) / 2f) * pileSpacing;
+                    pileY = layer * pileLayerHeight;
+                }
+
+                Vector3 targetLocal = new Vector3(
+                    pileCenterLocal.x + pileX,
+                    groundYLocal + (item.itemProperties.verticalOffset - 0.05f) + extraYOffset + pileY,
+                    pileCenterLocal.z + pileZ
+                );
+
+                Vector3 worldPos = ship.transform.TransformPoint(targetLocal);
+                if (!force && Vector3.Distance(worldPos, item.transform.position) < 0.25f)
+                {
+                    continue;
+                }
+
+                // Special-case held item: it's filtered by ShouldSkip (isHeld==true), but user wants it moved too.
+                if (held != null && item == held)
+                {
+                    item.floorYRot = -1;
+                    MoveUtils.MoveItemOnShipLocal(item, targetLocal, item.floorYRot);
+                    moved++;
+                    yield return null;
+                    continue;
+                }
+
+                yield return GrabbableRetry(item);
+
+                if (!ShouldSkip(item))
+                {
+                    item.floorYRot = -1;
+                    if (!MoveUtils.MoveItemOnShipLocal(item, targetLocal, item.floorYRot))
+                    {
+                        Log.Warning($"Failed to move {item.itemProperties?.itemName ?? item.name}");
+                    }
+
+                    int retry = 15;
+                    while (!Player.CanGrabObject(item) && retry > 0)
+                    {
+                        yield return new WaitForEndOfFrame();
+                        retry--;
+                    }
+
+                    moved++;
+                }
+            }
+
+            Log.Chat($"Moved '{itemKey}' ({moved} items)", "00FF00");
+            inProgress = false;
+        }
+
+        private Dictionary<string, Vector3> CreateLayout(List<string> itemNames, HashSet<string>? reservedTypes = null)
         {
             Dictionary<string, Vector3> layout = new Dictionary<string, Vector3>();
 
@@ -265,12 +656,22 @@ namespace QuickSort
             // Types spread only on X (left/right). If there are too many types, we go UP on Y and restart from first X.
             int cols = Mathf.Max(1, itemsPerRow.Value);
 
+            // If we have reserved types (saved custom positions), skip them without advancing layout slots.
+            // This prevents "holes" in the normal grid when some types are placed elsewhere.
+            int reservedCount = 0;
             for (int i = 0; i < itemNames.Count; i++)
             {
                 string itemName = itemNames[i];
 
-                int layer = i / cols;
-                int col = i % cols;
+                if (reservedTypes != null && reservedTypes.Contains(itemName))
+                {
+                    reservedCount++;
+                    continue;
+                }
+
+                int layoutIndex = i - reservedCount;
+                int layer = layoutIndex / cols;
+                int col = layoutIndex % cols;
 
                 float centerOffset = (cols - 1) * 0.5f;
                 float xOffset = (col - centerOffset) * itemSpacing.Value;
@@ -291,7 +692,9 @@ namespace QuickSort
 
             foreach (GrabbableObject item in allItems)
             {
-                if (!ShouldSkip(item) && item.isInShipRoom && item.itemProperties.isScrap)
+                // Include ALL grabbable items that are inside the ship room (not only scrap).
+                // Store-bought items like shovel/weedkiller are not scrap and were previously excluded.
+                if (!ShouldSkip(item) && item.isInShipRoom)
                 {
                     scrap.Add(item);
                 }
@@ -315,7 +718,7 @@ namespace QuickSort
 
         private bool ShouldBreak(GrabbableObject item)
         {
-            return !inProgress || !Ship.Stationary ||
+            return !inProgress || !Ship.Stationary || 
                    (Player.Local != null && (Player.Local.beamOutParticle.isPlaying || Player.Local.beamUpParticle.isPlaying));
         }
 
@@ -343,12 +746,56 @@ namespace QuickSort
             }
 
             string itemName = item.Name();
-            string[] skipped = skippedItems.Value.Split(',');
-            foreach (string skippedItem in skipped)
+            // Apply skip list based on scrap vs non-scrap so shop items aren't accidentally excluded.
+            string list = (item.itemProperties != null && item.itemProperties.isScrap)
+                ? skippedItems.Value
+                : (skippedNonScrapItems != null ? skippedNonScrapItems.Value : "");
+
+            if (!string.IsNullOrWhiteSpace(list))
             {
-                if (itemName.Contains(skippedItem.Trim().ToLower()))
+                string[] skipped = list.Split(',');
+                foreach (string skippedItem in skipped)
                 {
-                    return true;
+                    string token = skippedItem.Trim().ToLower();
+                    if (string.IsNullOrWhiteSpace(token)) continue;
+                    if (itemName.Contains(token))
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        // Full sort (/sort with no item name) uses skippedItems as a GLOBAL skip list,
+        // regardless of scrap vs non-scrap, per user preference.
+        private bool ShouldSkipFullSort(GrabbableObject item)
+        {
+            if (item == null) return true;
+
+            if (!item.grabbable || item.deactivated || item.isHeld || item.isPocketed)
+                return true;
+
+            if (item.Name() == "body")
+                return true;
+
+            if (!item.isInShipRoom)
+                return true;
+
+            string itemName = item.Name();
+
+            // Combine skippedItems (global) + optional non-scrap list, so users can configure either.
+            string list = skippedItems.Value;
+            if (skippedNonScrapItems != null && !string.IsNullOrWhiteSpace(skippedNonScrapItems.Value))
+                list = string.IsNullOrWhiteSpace(list) ? skippedNonScrapItems.Value : (list + "," + skippedNonScrapItems.Value);
+
+            if (!string.IsNullOrWhiteSpace(list))
+            {
+                foreach (string skippedItem in list.Split(','))
+                {
+                    string token = skippedItem.Trim().ToLower();
+                    if (string.IsNullOrWhiteSpace(token)) continue;
+                    if (itemName.Contains(token))
+                        return true;
                 }
             }
 
@@ -366,14 +813,24 @@ namespace QuickSort
 
         public override string Name => "sort";
         public override string[] Commands => new[] { "sort", Name };
-        public override string Description => "Sorts items on the ship. Usage: /sort [-r|-redo] [help]";
+        public override string Description =>
+            "Sorts items on the ship.\n" +
+            "Usage:\n" +
+            "  /sort                 -> sort everything\n" +
+            "  /sort <itemName>      -> pull that item type to YOUR position (e.g. /sort cash_register)\n" +
+            "  /sort <number>        -> shortcut from JSON (pull to you) (e.g. /sort 1)\n" +
+            "  /sort bind <name|id>  -> bind your HELD item to an alias name OR shortcut id (then /sort <name> or /sort <id> works)\n" +
+            "  /sort set [itemName]  -> set this type's future sort position to YOUR position (name optional if holding)\n" +
+            "  /sort reset [itemName]-> delete saved sort position for this type (name optional if holding)\n" +
+            "  /sort bindings        -> list all binds (numbers + names)\n" +
+            "  /sort positions       -> list saved sort positions";
 
         public override bool Invoke(string[] args, Dictionary<string, string> kwargs, out string? error)
         {
             error = null;
-
+            
             QuickSort.Log.Info($"SortCommand.Invoke called with args: [{string.Join(", ", args)}]");
-
+            
             if (args.Length > 0 && args[0] == "help")
             {
                 ChatCommandAPI.ChatCommandAPI.Print(Description);
@@ -395,7 +852,14 @@ namespace QuickSort
             }
 
             // Works on non-host too (vanilla ServerRpc calls from local player).
-            bool force = args.Contains("-r") || args.Contains("-redo");
+            // Note: force flags were removed.
+            if (args.Contains("-r") || args.Contains("-redo"))
+            {
+                error = "Flag '-r/-redo' was removed.";
+                return false;
+            }
+
+            string[] filteredArgs = args;
 
             // Get Sorter instance from Plugin (Unity-safe null checks: destroyed objects compare == null,
             // but C# null-conditional (?.) does NOT use Unity's overloaded null semantics)
@@ -439,13 +903,284 @@ namespace QuickSort
                     return false;
                 }
             }
-
+            
             QuickSort.Log.Info("SortCommand executing...");
+
+            // Subcommands / shortcuts / item name
+            if (filteredArgs.Length > 0)
+            {
+                if (filteredArgs[0] == "bind")
+                {
+                    // /sort bind <aliasName|id>
+                    // /sort bind reset <aliasName|id>
+                    if (filteredArgs.Length < 2)
+                    {
+                        error = "Usage: /sort bind <name> (hold the item you want to bind)";
+                        return false;
+                    }
+
+                    // reset/remove bindings
+                    if (filteredArgs.Length >= 3 && (filteredArgs[1] == "reset" || filteredArgs[1] == "rm" || filteredArgs[1] == "remove" || filteredArgs[1] == "del"))
+                    {
+                        string target = string.Join(" ", filteredArgs.Skip(2)).Trim();
+                        if (string.IsNullOrWhiteSpace(target))
+                        {
+                            error = "Usage: /sort bind reset <name|id>";
+                            return false;
+                        }
+
+                        if (int.TryParse(target, out int removeId) && removeId > 0)
+                        {
+                            if (!SortShortcuts.RemoveShortcut(removeId, out bool removed, out var rmErr))
+                            {
+                                error = rmErr ?? "Failed to remove shortcut.";
+                                return false;
+                            }
+                            ChatCommandAPI.ChatCommandAPI.Print(removed ? $"Unbound {removeId}" : $"No binding for {removeId}");
+                            return true;
+                        }
+                        else
+                        {
+                            if (!SortShortcuts.RemoveAlias(target, out bool removed, out var rmErr))
+                            {
+                                error = rmErr ?? "Failed to remove alias.";
+                                return false;
+                            }
+                            string key = Extensions.NormalizeName(target);
+                            ChatCommandAPI.ChatCommandAPI.Print(removed ? $"Unbound {key}" : $"No binding for {key}");
+                            return true;
+                        }
+                    }
+
+                    var held = Player.Local != null ? Player.Local.currentlyHeldObjectServer as GrabbableObject : null;
+                    if (held == null)
+                    {
+                        error = "You must hold an item to bind.";
+                        return false;
+                    }
+
+                    string nameOrIdRaw = string.Join(" ", filteredArgs.Skip(1));
+                    string itemKey = held.Name();
+
+                    // If user binds a number (e.g. "1"), treat it as a shortcut id bind.
+                    if (int.TryParse(nameOrIdRaw.Trim(), out int bindShortcutId) && bindShortcutId > 0)
+                    {
+                        if (!SortShortcuts.SetShortcut(bindShortcutId, itemKey, out var setErr))
+                        {
+                            error = setErr ?? "Failed to bind shortcut.";
+                            return false;
+                        }
+                        ChatCommandAPI.ChatCommandAPI.Print($"Bound {bindShortcutId} => {itemKey}");
+                        return true;
+                    }
+
+                    if (!SortShortcuts.BindAlias(nameOrIdRaw, itemKey, out var bindErr))
+                    {
+                        error = bindErr ?? "Failed to bind alias.";
+                        return false;
+                    }
+
+                    ChatCommandAPI.ChatCommandAPI.Print($"Bound {Extensions.NormalizeName(nameOrIdRaw)} => {itemKey}");
+                    return true;
+                }
+
+                if (filteredArgs[0] == "reset")
+                {
+                    // /sort reset [itemName]
+                    // If itemName is omitted, use currently held item.
+                    string? resetKey = filteredArgs.Length > 1
+                        ? Extensions.NormalizeName(string.Join(" ", filteredArgs.Skip(1)))
+                        : (Player.Local?.currentlyHeldObjectServer as GrabbableObject)?.Name();
+
+                    if (string.IsNullOrWhiteSpace(resetKey))
+                    {
+                        error = "Missing item name (hold the item or provide a name).";
+                        return false;
+                    }
+
+                    if (!SortPositions.Remove(resetKey, out bool removed, out var removeErr))
+                    {
+                        error = removeErr ?? "Failed to remove saved position.";
+                        return false;
+                    }
+                    if (removeErr != null)
+                    {
+                        error = removeErr;
+                        return false;
+                    }
+
+                    if (removed)
+                        ChatCommandAPI.ChatCommandAPI.Print($"Removed saved sort position for '{resetKey}'.");
+                    else
+                        ChatCommandAPI.ChatCommandAPI.Print($"No saved sort position for '{resetKey}'.");
+
+                    return true;
+                }
+
+                if (filteredArgs[0] == "set")
+                {
+                    string? setQuery = filteredArgs.Length > 1 ? string.Join(" ", filteredArgs.Skip(1)) : null;
+                    if (!sorter.TrySetAndMoveTypeToPlayer(setQuery, force: false, out error))
+                        return false;
+
+                    string label = !string.IsNullOrWhiteSpace(setQuery)
+                        ? Extensions.NormalizeName(setQuery)
+                        : (Player.Local?.currentlyHeldObjectServer as GrabbableObject)?.Name() ?? "held_item";
+                    if (SortPositions.TryGet(label, out var saved, out var readErr))
+                    {
+                        ChatCommandAPI.ChatCommandAPI.Print(
+                            $"Saved sort position for '{label}' => (x={saved.x:F2}, y={saved.y:F2}, z={saved.z:F2}).");
+                    }
+                    else
+                    {
+                        if (readErr != null) QuickSort.Log.Warning(readErr);
+                        ChatCommandAPI.ChatCommandAPI.Print($"Saved sort position for '{label}'.");
+                    }
+                    return true;
+                }
+
+                if (filteredArgs[0] == "positions")
+                {
+                    var list = SortPositions.ListAll(out var listError);
+                    if (listError != null)
+                    {
+                        error = listError;
+                        return false;
+                    }
+
+                    if (list.Count == 0)
+                    {
+                        ChatCommandAPI.ChatCommandAPI.Print("No saved sort positions.");
+                        return true;
+                    }
+
+                    string text = string.Join(", ", list.Take(8).Select(p => $"{p.itemKey}=(x={p.shipLocalPos.x:F1},y={p.shipLocalPos.y:F1},z={p.shipLocalPos.z:F1})"));
+                    if (list.Count > 8) text += ", ...";
+                    ChatCommandAPI.ChatCommandAPI.Print(text);
+                    return true;
+                }
+
+                // "shortcut" and "bind" are the same concept now: list everything together.
+                if (filteredArgs[0] == "bindings" || filteredArgs[0] == "binds" || filteredArgs[0] == "shortcuts" || filteredArgs[0] == "aliases")
+                {
+                    var shortcuts = SortShortcuts.ListShortcuts(out var shortcutErr);
+                    if (shortcutErr != null)
+                    {
+                        error = shortcutErr;
+                        return false;
+                    }
+
+                    var aliases = SortShortcuts.ListAliases(out var aliasErr);
+                    if (aliasErr != null)
+                    {
+                        error = aliasErr;
+                        return false;
+                    }
+
+                    if (shortcuts.Count == 0 && aliases.Count == 0)
+                    {
+                        ChatCommandAPI.ChatCommandAPI.Print("No bindings found.");
+                        return true;
+                    }
+
+                    if (shortcuts.Count > 0)
+                    {
+                        string text = string.Join(", ", shortcuts.Select(s => $"{s.id}={s.itemKey}"));
+                        ChatCommandAPI.ChatCommandAPI.Print(text);
+                    }
+                    if (aliases.Count > 0)
+                    {
+                        string text = string.Join(", ", aliases.Take(12).Select(a => $"{a.alias}={a.itemKey}"));
+                        if (aliases.Count > 12) text += ", ...";
+                        ChatCommandAPI.ChatCommandAPI.Print(text);
+                    }
+
+                    return true;
+                }
+
+                // /sort 1 -> resolve via JSON
+                if (filteredArgs.Length == 1 && int.TryParse(filteredArgs[0], out int shortcutId))
+                {
+                    if (!SortShortcuts.TryResolve(shortcutId, out var itemKey, out var shortcutError))
+                    {
+                        error = shortcutError ?? "Unknown shortcut error";
+                        return false;
+                    }
+
+                    Log.ConfirmSound();
+                    if (!sorter.TryStartGatherByQuery(itemKey, force: false, out error))
+                        return false;
+
+                    QuickSort.Log.Info("SortCommand executed successfully (shortcut move)");
+                    return true;
+                }
+
+                // /sort alias -> resolve via JSON alias binding
+                if (filteredArgs.Length == 1)
+                {
+                    if (SortShortcuts.TryResolveAlias(filteredArgs[0], out var aliasedKey, out _))
+                    {
+                        Log.ConfirmSound();
+                        if (!sorter.TryStartGatherByQuery(aliasedKey, force: false, out error))
+                            return false;
+
+                        QuickSort.Log.Info("SortCommand executed successfully (alias move)");
+                        return true;
+                    }
+                }
+
+                // /sort item name (allow spaces)
+                string itemQuery = string.Join(" ", filteredArgs);
+                Log.ConfirmSound();
+                if (!sorter.TryStartGatherByQuery(itemQuery, force: false, out error))
+                    return false;
+
+                QuickSort.Log.Info("SortCommand executed successfully (item move)");
+                return true;
+            }
+
+            // Default: full sort
             sorter.CategorizeItems();
             Log.ConfirmSound();
-            sorter.StartCoroutine(sorter.SortItems(force));
-            QuickSort.Log.Info("SortCommand executed successfully");
+            sorter.StartCoroutine(sorter.SortItems(force: false));
+            QuickSort.Log.Info("SortCommand executed successfully (full sort)");
             return true;
+        }
+    }
+
+    // Short commands:
+    // - /sb ... == /sort bind ...
+    // - /ss ... == /sort set ...
+    public class SortBindCommand : Command
+    {
+        public override string Name => "sb";
+        public override string[] Commands => new[] { "sb", Name };
+        public override string Description =>
+            "Shortcut for /sort bind\n" +
+            "Usage:\n" +
+            "  /sb <name|id>  -> bind your HELD item to an alias name OR shortcut id";
+
+        public override bool Invoke(string[] args, Dictionary<string, string> kwargs, out string? error)
+        {
+            // Reuse SortCommand by injecting the subcommand token.
+            var forwarded = new[] { "bind" }.Concat(args ?? Array.Empty<string>()).ToArray();
+            return new SortCommand().Invoke(forwarded, kwargs, out error);
+        }
+    }
+
+    public class SortSetCommand : Command
+    {
+        public override string Name => "ss";
+        public override string[] Commands => new[] { "ss", Name };
+        public override string Description =>
+            "Shortcut for /sort set\n" +
+            "Usage:\n" +
+            "  /ss [itemName]  -> set saved sort position for this type (name optional if holding)";
+
+        public override bool Invoke(string[] args, Dictionary<string, string> kwargs, out string? error)
+        {
+            var forwarded = new[] { "set" }.Concat(args ?? Array.Empty<string>()).ToArray();
+            return new SortCommand().Invoke(forwarded, kwargs, out error);
         }
     }
 }

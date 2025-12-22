@@ -50,8 +50,35 @@ namespace QuickSort
             // Update client-side immediately for responsiveness
             item.transform.position = ship.transform.TransformPoint(shipLocalPos);
 
-            player.SetObjectAsNoLongerHeld(true, true, shipLocalPos, item, floorYRot);
-            player.ThrowObjectServerRpc(item.NetworkObject, true, true, shipLocalPos, floorYRot);
+            // Newer LC versions can error/log if ThrowObjectServerRpc is used while not holding the item.
+            // PlaceObjectServerRpc is a more direct "place this object at shipLocalPos" path.
+            try
+            {
+                player.SetObjectAsNoLongerHeld(true, true, shipLocalPos, item, floorYRot);
+            }
+            catch
+            {
+                // ignore; keep trying to place
+            }
+
+            try
+            {
+                // Place locally + ask server to place & parent to ship.
+                player.PlaceGrabbableObject(ship.transform, shipLocalPos, false, item);
+                player.PlaceObjectServerRpc(item.NetworkObject, ship, shipLocalPos, false);
+            }
+            catch
+            {
+                // If place path fails (signature changes across versions), fall back to throw RPC.
+                try
+                {
+                    player.ThrowObjectServerRpc(item.NetworkObject, true, true, shipLocalPos, floorYRot);
+                }
+                catch
+                {
+                    return false;
+                }
+            }
             return true;
         }
 

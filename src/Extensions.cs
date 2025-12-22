@@ -6,14 +6,20 @@ namespace QuickSort
 {
     public static class Extensions
     {
+        public static string NormalizeName(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return "";
+            return s.ToLower().Replace(" ", "_").Replace("-", "_").Trim();
+        }
+
         public static string Name(this GrabbableObject item)
         {
-            return item.itemProperties.itemName.ToLower().Replace(" ", "_").Replace("-", "_");
+            return NormalizeName(item.itemProperties.itemName);
         }
 
         public static string Name(this Item item)
         {
-            return item.itemName.ToLower().Replace(" ", "_").Replace("-", "_");
+            return NormalizeName(item.itemName);
         }
     }
 }

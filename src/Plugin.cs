@@ -27,6 +27,10 @@ namespace QuickSort
             QuickSort.Log.Init(Logger);
             QuickSort.Log.Info("QuickSort - Item Sorter loading...");
 
+            // Create shortcuts file (user-editable) early so it's easy to find in BepInEx/config
+            SortShortcuts.EnsureFileExists();
+            SortPositions.EnsureFileExists();
+
             // Initialize Harmony patches
             harmony = new Harmony("pasta.quicksort");
             harmony.PatchAll(typeof(QuickSort.Ship));
@@ -37,6 +41,8 @@ namespace QuickSort
             try
             {
                 new QuickSort.SortCommand();
+                new QuickSort.SortBindCommand();
+                new QuickSort.SortSetCommand();
                 QuickSort.Log.Info("Sort command registered in Awake");
             }
             catch (System.Exception e)
@@ -97,6 +103,8 @@ namespace QuickSort
                 try
                 {
                     new QuickSort.SortCommand();
+                    new QuickSort.SortBindCommand();
+                    new QuickSort.SortSetCommand();
                     commandRegistered = true;
                     QuickSort.Log.Info("Sort command registered");
                 }

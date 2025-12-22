@@ -16,6 +16,7 @@
     <PackageReference Include="BepInEx.AssemblyPublicizer.MSBuild" Version="0.4.2" PrivateAssets="all" />
     <PackageReference Include="BepInEx.Core" Version="5.*" />
     <PackageReference Include="BepInEx.PluginInfoProps" Version="2.1.0" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="UnityEngine.Modules" Version="6000.0.5" IncludeAssets="compile" />
 
     <Reference Include="0Harmony" HintPath="C:\Users\Win10\AppData\Roaming\Thunderstore Mod Manager\DataFolder\LethalCompany\profiles\van\BepInEx\core\0Harmony.dll" Publicize="true"/>
