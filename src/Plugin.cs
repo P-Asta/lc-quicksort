@@ -43,6 +43,7 @@ namespace QuickSort
                 new QuickSort.SortCommand();
                 new QuickSort.SortBindCommand();
                 new QuickSort.SortSetCommand();
+                new QuickSort.PileCommand();
                 QuickSort.Log.Info("Sort command registered in Awake");
             }
             catch (System.Exception e)
@@ -105,6 +106,7 @@ namespace QuickSort
                     new QuickSort.SortCommand();
                     new QuickSort.SortBindCommand();
                     new QuickSort.SortSetCommand();
+                    new QuickSort.PileCommand();
                     commandRegistered = true;
                     QuickSort.Log.Info("Sort command registered");
                 }

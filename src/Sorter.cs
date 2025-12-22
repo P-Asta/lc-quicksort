@@ -332,54 +332,8 @@ namespace QuickSort
                 list.Add(item);
             }
 
-            string q = Extensions.NormalizeName(query);
-            if (string.IsNullOrWhiteSpace(q))
-            {
-                error = "Invalid item name";
+            if (!TryResolveItemKeyFromGrouped(grouped, query, out var resolved, out error))
                 return false;
-            }
-
-            string? resolved = null;
-
-            if (grouped.ContainsKey(q))
-            {
-                resolved = q;
-            }
-            else
-            {
-                // Fuzzy match: allow partial matches
-                var keys = grouped.Keys.ToList();
-                // Also match "loose" names that ignore underscores so users can type e.g. "weedkiller" for "weed_killer"
-                // or "jet pack" for "jetpack" depending on the game's internal naming.
-                string qLoose = q.Replace("_", "");
-                var matches = keys
-                    .Where(k =>
-                    {
-                        if (k.Contains(q) || q.Contains(k)) return true;
-                        string kLoose = k.Replace("_", "");
-                        return kLoose.Contains(qLoose) || qLoose.Contains(kLoose);
-                    })
-                    .Distinct()
-                    .ToList();
-
-                if (matches.Count == 1)
-                {
-                    resolved = matches[0];
-                }
-                else if (matches.Count == 0)
-                {
-                    error = $"No item match for '{query}'.";
-                    return false;
-                }
-                else
-                {
-                    // Too many matches: tell user candidates
-                    string candidates = string.Join(", ", matches.Take(8));
-                    if (matches.Count > 8) candidates += ", ...";
-                    error = $"Ambiguous item '{query}'. Matches: {candidates}";
-                    return false;
-                }
-            }
 
             if (!TryGetPlayerShipLocalTarget(out Vector3 targetLocal, out error))
                 return false;
@@ -396,7 +350,10 @@ namespace QuickSort
             return true;
         }
 
-        public bool TrySetAndMoveTypeToPlayer(string? queryOrNull, bool force, out string? error)
+        // /pile [itemName] behavior:
+        // - If itemName is provided: same as /sort <itemName> (fuzzy match against ship items)
+        // - If itemName is omitted: use HELD item's type, and still work even if the held item is the only match
+        public bool TryStartPileByQueryOrHeld(string? queryOrNull, bool force, out string? error)
         {
             error = null;
 
@@ -412,24 +369,155 @@ namespace QuickSort
                 return false;
             }
 
-            // Determine item key: explicit name or held item type
-            string itemKey;
+            var held = Player.Local != null ? Player.Local.currentlyHeldObjectServer as GrabbableObject : null;
+
+            string query = !string.IsNullOrWhiteSpace(queryOrNull)
+                ? queryOrNull!
+                : (held != null ? held.Name() : "");
+
+            if (string.IsNullOrWhiteSpace(query))
+            {
+                error = "Missing item name (hold the item or provide a name).";
+                return false;
+            }
+
+            // Explicit gather should work even if the item type is in the user's skip lists.
+            CategorizeItems(includeSkippedItems: true);
+
+            // Build groups once for name resolution (ship items + held item)
+            Dictionary<string, List<GrabbableObject>> grouped = new Dictionary<string, List<GrabbableObject>>();
+            if (scrap != null)
+            {
+                foreach (var item in scrap)
+                {
+                    if (ShouldSkipExplicitQuery(item)) continue;
+                    string key = item.Name();
+                    if (!grouped.TryGetValue(key, out var list))
+                    {
+                        list = new List<GrabbableObject>();
+                        grouped[key] = list;
+                    }
+                    list.Add(item);
+                }
+            }
+
+            // Ensure held item type is resolvable even if it isn't currently counted as "in ship"
+            if (held != null && !ShouldSkipExplicitQuery(held))
+            {
+                string heldKey = held.Name();
+                if (!grouped.TryGetValue(heldKey, out var list))
+                {
+                    list = new List<GrabbableObject>();
+                    grouped[heldKey] = list;
+                }
+                if (!list.Contains(held)) list.Add(held);
+            }
+
+            if (grouped.Count == 0)
+            {
+                error = "No items found in ship";
+                return false;
+            }
+
+            if (!TryResolveItemKeyFromGrouped(grouped, query, out var resolved, out error))
+                return false;
+
+            if (!TryGetPlayerShipLocalTarget(out Vector3 targetLocal, out error))
+                return false;
+
+            // Convert player's ship-local Y to a ground-relative Y offset (prevents double-adding ground).
+            if (!TryGetGroundYLocalAt(shipLocalXZ: targetLocal, out float groundYLocal, out string? groundError))
+            {
+                error = groundError;
+                return false;
+            }
+
+            Vector3 targetWithOffset = new Vector3(targetLocal.x, targetLocal.y - groundYLocal, targetLocal.z);
+            StartCoroutine(MoveItemsOfTypeToPosition(resolved, targetWithOffset, force, announce: true, ignoreSkipLists: true));
+            return true;
+        }
+
+        public bool TrySetAndMoveTypeToPlayer(string? queryOrNull, bool force, out string resolvedItemKey, out string? error)
+        {
+            resolvedItemKey = "";
+            error = null;
+
+            if (!CanSort)
+            {
+                error = "Must be in orbit or stationary at company";
+                return false;
+            }
+
+            if (inProgress)
+            {
+                error = "Operation in progress";
+                return false;
+            }
+
+            // Determine item key:
+            // - If query is provided, resolve it against item types currently present on the ship (fuzzy/partial match).
+            // - If omitted, use currently held item type.
+            var held = Player.Local != null ? Player.Local.currentlyHeldObjectServer as GrabbableObject : null;
             if (!string.IsNullOrWhiteSpace(queryOrNull))
             {
-                itemKey = Extensions.NormalizeName(queryOrNull);
+                // Explicit /sort set ... should work even if the type is in skip lists.
+                CategorizeItems(includeSkippedItems: true);
+
+                if ((scrap == null || scrap.Count == 0) && held == null)
+                {
+                    error = "No items found in ship to match that name (hold the item or omit the name).";
+                    return false;
+                }
+
+                // Build groups once for name resolution (same as /sort <item>)
+                Dictionary<string, List<GrabbableObject>> grouped = new Dictionary<string, List<GrabbableObject>>();
+                if (scrap != null)
+                {
+                    foreach (var item in scrap)
+                    {
+                        if (ShouldSkipExplicitQuery(item)) continue;
+                        string key = item.Name();
+                        if (!grouped.TryGetValue(key, out var list))
+                        {
+                            list = new List<GrabbableObject>();
+                            grouped[key] = list;
+                        }
+                        list.Add(item);
+                    }
+                }
+
+                // Also allow matching the held item type even if it's not currently counted in ship items.
+                if (held != null && !ShouldSkipExplicitQuery(held))
+                {
+                    string heldKey = held.Name();
+                    if (!grouped.TryGetValue(heldKey, out var list))
+                    {
+                        list = new List<GrabbableObject>();
+                        grouped[heldKey] = list;
+                    }
+                    if (!list.Contains(held)) list.Add(held);
+                }
+
+                if (grouped.Count == 0)
+                {
+                    error = "No valid items found to match that name.";
+                    return false;
+                }
+
+                if (!TryResolveItemKeyFromGrouped(grouped, queryOrNull, out resolvedItemKey, out error))
+                    return false;
             }
             else
             {
-                var held = Player.Local != null ? Player.Local.currentlyHeldObjectServer as GrabbableObject : null;
                 if (held == null)
                 {
                     error = "No item name provided and no held item.";
                     return false;
                 }
-                itemKey = held.Name();
+                resolvedItemKey = held.Name();
             }
 
-            if (string.IsNullOrWhiteSpace(itemKey))
+            if (string.IsNullOrWhiteSpace(resolvedItemKey))
             {
                 error = "Invalid item name";
                 return false;
@@ -446,15 +534,64 @@ namespace QuickSort
             }
 
             Vector3 savedPos = new Vector3(targetLocal.x, targetLocal.y - groundYLocal, targetLocal.z);
-            if (!SortPositions.Set(itemKey, savedPos, out error))
+            if (!SortPositions.Set(resolvedItemKey, savedPos, out error))
                 return false;
 
-            // Explicit /sort set ... should work even if the type is in skip lists.
-            CategorizeItems(includeSkippedItems: true);
             Log.ConfirmSound();
             // Also move to the exact saved position (ground-relative offset)
-            StartCoroutine(MoveItemsOfTypeToPosition(itemKey, savedPos, force, announce: true, ignoreSkipLists: true));
+            StartCoroutine(MoveItemsOfTypeToPosition(resolvedItemKey, savedPos, force, announce: true, ignoreSkipLists: true));
             return true;
+        }
+
+        private bool TryResolveItemKeyFromGrouped(Dictionary<string, List<GrabbableObject>> grouped, string query, out string resolvedKey, out string? error)
+        {
+            resolvedKey = "";
+            error = null;
+
+            string q = Extensions.NormalizeName(query);
+            if (string.IsNullOrWhiteSpace(q))
+            {
+                error = "Invalid item name";
+                return false;
+            }
+
+            if (grouped.ContainsKey(q))
+            {
+                resolvedKey = q;
+                return true;
+            }
+
+            // Fuzzy match: allow partial matches.
+            var keys = grouped.Keys.ToList();
+            // Also match "loose" names that ignore underscores so users can type e.g. "weedkiller" for "weed_killer"
+            // or "jet pack" for "jetpack" depending on the game's internal naming.
+            string qLoose = q.Replace("_", "");
+            var matches = keys
+                .Where(k =>
+                {
+                    if (k.Contains(q) || q.Contains(k)) return true;
+                    string kLoose = k.Replace("_", "");
+                    return kLoose.Contains(qLoose) || qLoose.Contains(kLoose);
+                })
+                .Distinct()
+                .ToList();
+
+            if (matches.Count == 1)
+            {
+                resolvedKey = matches[0];
+                return true;
+            }
+            if (matches.Count == 0)
+            {
+                error = $"No item match for '{query}'.";
+                return false;
+            }
+
+            // Too many matches: tell user candidates
+            string candidates = string.Join(", ", matches.Take(8));
+            if (matches.Count > 8) candidates += ", ...";
+            error = $"Ambiguous item '{query}'. Matches: {candidates}";
+            return false;
         }
 
         private bool TryGetPlayerShipLocalTarget(out Vector3 shipLocalTarget, out string? error)
@@ -1292,13 +1429,20 @@ namespace QuickSort
                 if (filteredArgs[0] == "set")
                 {
                     string? setQuery = filteredArgs.Length > 1 ? string.Join(" ", filteredArgs.Skip(1)) : null;
-                    if (!sorter.TrySetAndMoveTypeToPlayer(setQuery, force: false, out error))
+                    if (!sorter.TrySetAndMoveTypeToPlayer(setQuery, force: false, out var resolvedKey, out error))
                         return false;
 
-                    string label = !string.IsNullOrWhiteSpace(setQuery)
-                        ? Extensions.NormalizeName(setQuery)
-                        : (Player.Local?.currentlyHeldObjectServer as GrabbableObject)?.Name() ?? "held_item";
-                    if (SortPositions.TryGet(label, out var saved, out var readErr))
+                    if (!string.IsNullOrWhiteSpace(setQuery))
+                    {
+                        string qNorm = Extensions.NormalizeName(setQuery);
+                        if (!string.IsNullOrWhiteSpace(qNorm) && qNorm != resolvedKey)
+                        {
+                            ChatCommandAPI.ChatCommandAPI.Print($"Resolved '{setQuery}' => '{resolvedKey}'.");
+                        }
+                    }
+
+                    string label = string.IsNullOrWhiteSpace(resolvedKey) ? "held_item" : resolvedKey;
+                    if (SortPositions.TryGet(resolvedKey, out var saved, out var readErr))
                     {
                         ChatCommandAPI.ChatCommandAPI.Print(
                             $"Saved sort position for '{label}' => (x={saved.x:F2}, y={saved.y:F2}, z={saved.z:F2}).");
@@ -1450,12 +1594,69 @@ namespace QuickSort
         public override string Description =>
             "Shortcut for /sort set\n" +
             "Usage:\n" +
-            "  /ss [itemName]  -> set saved sort position for this type (name optional if holding)";
+            "  /ss [itemName]  -> set saved sort position for this type (name optional if holding; partial match supported)";
 
         public override bool Invoke(string[] args, Dictionary<string, string> kwargs, out string? error)
         {
             var forwarded = new[] { "set" }.Concat(args ?? Array.Empty<string>()).ToArray();
             return new SortCommand().Invoke(forwarded, kwargs, out error);
+        }
+    }
+
+    public class PileCommand : Command
+    {
+        public override string Name => "pile";
+        public override string[] Commands => new[] { "pile", Name };
+        public override string Description =>
+            "Piles a specific item type onto your position (like /sort <item>).\n" +
+            "Usage:\n" +
+            "  /pile <itemName>  -> pull that item type to YOUR position (partial match supported)\n" +
+            "  /pile             -> uses your HELD item type and also moves the held item";
+
+        public override bool Invoke(string[] args, Dictionary<string, string> kwargs, out string? error)
+        {
+            error = null;
+
+            if (args.Length > 0 && args[0] == "help")
+            {
+                ChatCommandAPI.ChatCommandAPI.Print(Description);
+                return true;
+            }
+
+            // Get Sorter instance from Plugin (Unity-safe null checks)
+            Sorter sorter = null;
+            if (Plugin.sorterObject != null)
+            {
+                sorter = Plugin.sorterObject.GetComponent<Sorter>();
+            }
+            if (sorter == null)
+            {
+                // Lazy init in case something destroyed our object or the command ran extremely early.
+                try
+                {
+                    if (Plugin.sorterObject == null)
+                    {
+                        Plugin.sorterObject = new GameObject("PastaSorter");
+                        UnityEngine.Object.DontDestroyOnLoad(Plugin.sorterObject);
+                    }
+
+                    sorter = Plugin.sorterObject.GetComponent<Sorter>();
+                    if (sorter == null)
+                    {
+                        sorter = Plugin.sorterObject.AddComponent<Sorter>();
+                    }
+                }
+                catch (Exception e)
+                {
+                    error = "Sorter not initialized yet";
+                    QuickSort.Log.Error("PileCommand failed: " + e.Message);
+                    return false;
+                }
+            }
+
+            string? query = (args != null && args.Length > 0) ? string.Join(" ", args) : null;
+            Log.ConfirmSound();
+            return sorter.TryStartPileByQueryOrHeld(query, force: false, out error);
         }
     }
 }
