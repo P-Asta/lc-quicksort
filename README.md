@@ -2,9 +2,26 @@
 Ship item sorting + quick move commands for Lethal Company.
 
 ## Commands
-- **`/sort`**: Sort everything in the ship (respects `skippedItems` for full-sort skip).
-- **`/sort <itemName>`**: Move that item type to your current position (e.g. `/sort cash_register`).
+- **`/sort`**: Full sort (sort everything in the ship).
+  - Uses `skippedItems` as the skip list for full sort.
+- **`/sort -a`**: Full sort, but **IGNORE `skippedItems`** (sort absolutely everything that is eligible).
+- **`/sort -b`**: Full sort with “saved position priority”.
+  - If an item type has a saved `/sort set` position, it will **NOT** be skipped even if it matches `skippedItems`.
+  - Otherwise (no saved position), `skippedItems` still applies.
+  - **Note**: `-a` and `-b` cannot be combined (and `/sort -ab` / `/sort -ba` are rejected).
+- **`/sort <itemName>`**: Move that item type to your current position (e.g. `/sort cash_register` or `/sort kitchen knife`).
+  - This explicit move **ignores skip lists**, so it works even if the type is in `skippedItems`.
 - **`/sort <number>`**: Move the item type bound to that number (e.g. `/sort 1`).
+
+### Skip list (skippedItems)
+Edit `skippedItems` in-game:
+- **`/sort skip list`**: Show current `skippedItems` tokens
+- **`/sort skip add [itemName|alias|id]`**: Add a token
+  - If omitted, uses your **currently held item**.
+  - Also accepts alias or shortcut id.
+- **`/sort skip remove [itemName|alias|id]`**: Remove a token
+  - If omitted, uses your **currently held item**.
+  - Also accepts alias or shortcut id.
 
 ### Bindings (shortcut + alias)
 Bind the item you are currently holding:
@@ -36,8 +53,11 @@ All files are created under `BepInEx/config`.
 - **Saved positions**: `pasta.quicksort.sort.positions.json`
 
 ## Notes
-- `skippedItems` is used as the global skip list for full `/sort` (no item name).  
-- For `/sort <itemName>` (move one type), filtering uses the per-item skip logic.
+- **Item name normalization**: spaces/hyphens are normalized to underscores for matching (e.g. `kitchen knife` → `kitchen_knife`).
+- **Explicit move ignores skip**: `/sort <itemName>` will still work even if that type is in `skippedItems` (fixes kitchen knife not moving).
+- **Legacy config fix**:
+  - If `skippedItems` contains `rader_booster` (old typo), it is auto-rewritten to `radar_booster`.
+  - If a token accidentally has leading/trailing `_` (e.g. `_kitchen_knife`), it is normalized.
 
 ## SS
 ![alt text](https://raw.githubusercontent.com/P-Asta/lc-QuickSort/refs/heads/main/assets/image.png)

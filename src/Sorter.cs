@@ -21,7 +21,6 @@ namespace QuickSort
         public ConfigEntry<float> rowSpacing;
         public ConfigEntry<int> itemsPerRow;
         public ConfigEntry<string> skippedItems; // legacy name: now used for SCRAP skip list
-        public ConfigEntry<string> skippedNonScrapItems; // shop/tools skip list
         public ConfigEntry<float> sortAreaWidth;
         public ConfigEntry<float> sortAreaDepth;
         public ConfigEntry<float> wallPadding;
@@ -51,10 +50,13 @@ namespace QuickSort
             // NOTE: This setting historically applied to all items, which caused confusion and made
             // shop items (shovel, pro_flashlight, etc.) appear "unsortable" if users added them here.
             // It now applies ONLY to scrap items.
-            skippedItems = Plugin.config.Bind<string>("Sorter", "skippedItems", "body, clipboard, sticky_note, boombox, shovel, jetpack, flashlight, pro_flashlight, key, stun_grenade, lockpicker, mapper, extension_ladder, tzp_inhalant, walkie_talkie, zap_gun, kitchen_knife, weed_killer, rader_booster",
+            skippedItems = Plugin.config.Bind<string>("Sorter", "skippedItems", "body, clipboard, sticky_note, boombox, shovel, jetpack, flashlight, pro_flashlight, key, stun_grenade, lockpicker, mapper, extension_ladder, tzp_inhalant, walkie_talkie, zap_gun, kitchen_knife, weed_killer, radar_booster, spray_paint, belt_bag",
                 "SCRAP skip list (comma-separated, substring match). Only applies to scrap items.");
-            skippedNonScrapItems = Plugin.config.Bind<string>("Sorter", "skippedNonScrapItems", "",
-                "Non-scrap (shop/tools) skip list (comma-separated, substring match). Leave empty to sort shop items too.");
+
+            // Legacy config migration / normalization:
+            // - Old versions had a typo: "rader_booster" (should be "radar_booster")
+            // - Normalize tokens so spaces/hyphens work consistently in config
+            skippedItems.Value = NormalizeSkipListConfig(skippedItems.Value);
 
             // When there are too many ITEM TYPES, we don't push further into the ship (door/walls).
             // Instead we lift the next "type page" up on Y and restart from the first slot.
@@ -104,10 +106,10 @@ namespace QuickSort
 
             CategorizeItems();
             Log.ConfirmSound();
-            StartCoroutine(SortItems(force: false));
+            StartCoroutine(SortItems(force: false, ignoreSkippedItems: false));
         }
 
-        public IEnumerator SortItems(bool force)
+        public IEnumerator SortItems(bool force, bool ignoreSkippedItems = false, bool includeSavedPositionTypesEvenIfSkipped = false)
         {
             inProgress = true;
             Log.Chat("Press [Escape] to cancel sorting", "FFFF00");
@@ -132,15 +134,31 @@ namespace QuickSort
 
             Vector3 originLocal = SortOrigin; // ship-local origin
 
+            // Load saved custom positions ONCE (used for layout + optional skip override with -b)
+            HashSet<string>? savedTypes = null;
+            var savedPositions = SortPositions.ListAll(out var posListError);
+            if (posListError != null)
+            {
+                Log.Warning(posListError);
+            }
+            else
+            {
+                savedTypes = new HashSet<string>(savedPositions.Select(p => p.itemKey));
+            }
+
             // Group items by name
             Dictionary<string, List<GrabbableObject>> groupedItems = new Dictionary<string, List<GrabbableObject>>();
 
             foreach (GrabbableObject item in scrap)
             {
-                if (ShouldSkipFullSort(item))
+                string itemName = item.Name();
+                bool ignoreSkipTokensForThisItem =
+                    ignoreSkippedItems ||
+                    (includeSavedPositionTypesEvenIfSkipped && savedTypes != null && savedTypes.Contains(itemName));
+
+                if (ShouldSkipFullSort(item, ignoreSkipTokens: ignoreSkipTokensForThisItem))
                     continue;
 
-                string itemName = item.Name();
                 if (!groupedItems.ContainsKey(itemName))
                 {
                     groupedItems[itemName] = new List<GrabbableObject>();
@@ -151,16 +169,7 @@ namespace QuickSort
             // Create layout for non-custom-position item types only.
             // If a type has a saved position override, it should NOT consume a slot in the normal layout,
             // otherwise the layout will "skip" a spot (empty hole) where that type would have been.
-            HashSet<string>? reservedTypes = null;
-            var savedPositions = SortPositions.ListAll(out var posListError);
-            if (posListError != null)
-            {
-                Log.Warning(posListError);
-            }
-            else
-            {
-                reservedTypes = new HashSet<string>(savedPositions.Select(p => p.itemKey));
-            }
+            HashSet<string>? reservedTypes = savedTypes;
 
             // Vector3: x = offsetX, y = typeLayerY, z = offsetZ
             Dictionary<string, Vector3> layout = CreateLayout(groupedItems.Keys.ToList(), reservedTypes);
@@ -177,6 +186,7 @@ namespace QuickSort
                 {
                     Log.Warning(posError);
                 }
+                bool ignoreSkipTokensForThisType = includeSavedPositionTypesEvenIfSkipped && hasCustomPos;
 
                 // Determine the "lowest" (ground) Y once for this pile, then build layers upward from it.
                 // This avoids per-item raycasts hitting other items and causing upward drift.
@@ -254,7 +264,7 @@ namespace QuickSort
 
                     yield return GrabbableRetry(item);
 
-                    if (!ShouldSkipFullSort(item))
+                    if (!ShouldSkipFullSort(item, ignoreSkipTokens: (ignoreSkippedItems || ignoreSkipTokensForThisType)))
                     {
                         // Teleport item into place (server will apply via ServerRpc)
                         item.floorYRot = -1;
@@ -300,7 +310,8 @@ namespace QuickSort
                 return false;
             }
 
-            CategorizeItems();
+            // Explicit /sort <item> should work even if the item type is in the user's skip lists.
+            CategorizeItems(includeSkippedItems: true);
             if (scrap == null || scrap.Count == 0)
             {
                 error = "No items found in ship";
@@ -311,7 +322,7 @@ namespace QuickSort
             Dictionary<string, List<GrabbableObject>> grouped = new Dictionary<string, List<GrabbableObject>>();
             foreach (var item in scrap)
             {
-                if (ShouldSkip(item)) continue;
+                if (ShouldSkipExplicitQuery(item)) continue;
                 string key = item.Name();
                 if (!grouped.TryGetValue(key, out var list))
                 {
@@ -381,7 +392,7 @@ namespace QuickSort
             }
 
             Vector3 targetWithOffset = new Vector3(targetLocal.x, targetLocal.y - groundYLocal, targetLocal.z);
-            StartCoroutine(MoveItemsOfTypeToPosition(resolved, targetWithOffset, force, announce: true));
+            StartCoroutine(MoveItemsOfTypeToPosition(resolved, targetWithOffset, force, announce: true, ignoreSkipLists: true));
             return true;
         }
 
@@ -438,10 +449,11 @@ namespace QuickSort
             if (!SortPositions.Set(itemKey, savedPos, out error))
                 return false;
 
-            CategorizeItems();
+            // Explicit /sort set ... should work even if the type is in skip lists.
+            CategorizeItems(includeSkippedItems: true);
             Log.ConfirmSound();
             // Also move to the exact saved position (ground-relative offset)
-            StartCoroutine(MoveItemsOfTypeToPosition(itemKey, savedPos, force, announce: true));
+            StartCoroutine(MoveItemsOfTypeToPosition(itemKey, savedPos, force, announce: true, ignoreSkipLists: true));
             return true;
         }
 
@@ -495,7 +507,7 @@ namespace QuickSort
             return true;
         }
 
-        private IEnumerator MoveItemsOfTypeToPosition(string itemKey, Vector3 targetCenterShipLocal, bool force, bool announce)
+        private IEnumerator MoveItemsOfTypeToPosition(string itemKey, Vector3 targetCenterShipLocal, bool force, bool announce, bool ignoreSkipLists = false)
         {
             inProgress = true;
             if (announce)
@@ -522,7 +534,7 @@ namespace QuickSort
             Dictionary<string, List<GrabbableObject>> groupedItems = new Dictionary<string, List<GrabbableObject>>();
             foreach (GrabbableObject item in scrap)
             {
-                if (ShouldSkip(item)) continue;
+                if (ignoreSkipLists ? ShouldSkipExplicitQuery(item) : ShouldSkip(item)) continue;
                 string name = item.Name();
                 if (!groupedItems.TryGetValue(name, out var list))
                 {
@@ -622,7 +634,7 @@ namespace QuickSort
 
                 yield return GrabbableRetry(item);
 
-                if (!ShouldSkip(item))
+                if (!(ignoreSkipLists ? ShouldSkipExplicitQuery(item) : ShouldSkip(item)))
                 {
                     item.floorYRot = -1;
                     if (!MoveUtils.MoveItemOnShipLocal(item, targetLocal, item.floorYRot))
@@ -684,7 +696,7 @@ namespace QuickSort
             return layout;
         }
 
-        public void CategorizeItems()
+        public void CategorizeItems(bool includeSkippedItems = false)
         {
             scrap = new List<GrabbableObject>();
 
@@ -694,7 +706,8 @@ namespace QuickSort
             {
                 // Include ALL grabbable items that are inside the ship room (not only scrap).
                 // Store-bought items like shovel/weedkiller are not scrap and were previously excluded.
-                if (!ShouldSkip(item) && item.isInShipRoom)
+                bool skip = includeSkippedItems ? ShouldSkipExplicitQuery(item) : ShouldSkip(item);
+                if (!skip && item.isInShipRoom)
                 {
                     scrap.Add(item);
                 }
@@ -722,6 +735,145 @@ namespace QuickSort
                    (Player.Local != null && (Player.Local.beamOutParticle.isPlaying || Player.Local.beamUpParticle.isPlaying));
         }
 
+        // For explicit item queries (/sort <item>), we should NOT apply the user's skip lists.
+        // Otherwise, any type listed in skippedItems becomes "unsortable" even when requested directly.
+        private bool ShouldSkipExplicitQuery(GrabbableObject item)
+        {
+            if (item == null) return true;
+
+            // Same baseline filtering as ShouldSkip, but without skip-list tokens.
+            if (!item.grabbable || item.deactivated || item.isHeld || item.isPocketed)
+                return true;
+
+            if (item.Name() == "body")
+                return true;
+
+            if (!item.isInShipRoom)
+                return true;
+
+            return false;
+        }
+
+        private static string NormalizeSkipListConfig(string list)
+        {
+            if (string.IsNullOrWhiteSpace(list)) return list ?? "";
+
+            var seen = new HashSet<string>();
+            var tokens = new List<string>();
+
+            foreach (string raw in list.Split(','))
+            {
+                string t = raw?.Trim() ?? "";
+                if (string.IsNullOrWhiteSpace(t)) continue;
+
+                t = NormalizeSkipToken(t);
+                if (t == "rader_booster") t = "radar_booster";
+
+                if (string.IsNullOrWhiteSpace(t)) continue;
+                if (seen.Add(t))
+                    tokens.Add(t);
+            }
+
+            return string.Join(", ", tokens);
+        }
+
+        private static List<string> ParseSkipListTokens(string list)
+        {
+            if (string.IsNullOrWhiteSpace(list)) return new List<string>();
+            return list.Split(',')
+                .Select(t => NormalizeSkipToken(t))
+                .Where(t => !string.IsNullOrWhiteSpace(t))
+                .Select(t => t == "rader_booster" ? "radar_booster" : t)
+                .Distinct()
+                .ToList();
+        }
+
+        // Skip list tokens are stored as normalized item keys (underscores), but we guard against
+        // the historical bug where a leading space became a leading underscore (e.g. "_kitchen_knife").
+        private static string NormalizeSkipToken(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return "";
+            // Normalize to item-key style (spaces/hyphens -> underscores)
+            string token = Extensions.NormalizeName(s);
+            // Fix bug: leading/trailing underscores caused by leading/trailing spaces in user input
+            token = token.Trim('_');
+            // Legacy typo fix
+            if (token == "rader_booster") token = "radar_booster";
+            return token;
+        }
+
+        private static void TrySaveConfig()
+        {
+            try
+            {
+                Plugin.config?.Save();
+            }
+            catch (Exception e)
+            {
+                QuickSort.Log.Warning($"Failed to save config: {e.Message}");
+            }
+        }
+
+        public bool TrySkipAdd(string rawItemName, out string? error, out string? message)
+        {
+            error = null;
+            message = null;
+
+            string token = NormalizeSkipToken(rawItemName);
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                error = "Usage: /sort skip add <itemName>";
+                return false;
+            }
+
+            var tokens = ParseSkipListTokens(skippedItems.Value);
+            if (tokens.Contains(token))
+            {
+                message = $"Already in skippedItems: {token}";
+                return true;
+            }
+
+            tokens.Add(token);
+            skippedItems.Value = NormalizeSkipListConfig(string.Join(", ", tokens));
+            TrySaveConfig();
+            message = $"Added to skippedItems: {token}";
+            return true;
+        }
+
+        public bool TrySkipRemove(string rawItemName, out string? error, out string? message)
+        {
+            error = null;
+            message = null;
+
+            string token = NormalizeSkipToken(rawItemName);
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                error = "Usage: /sort skip remove <itemName>";
+                return false;
+            }
+
+            var tokens = ParseSkipListTokens(skippedItems.Value);
+            int before = tokens.Count;
+            tokens = tokens.Where(t => t != token).ToList();
+            if (tokens.Count == before)
+            {
+                message = $"Not in skippedItems: {token}";
+                return true;
+            }
+
+            skippedItems.Value = NormalizeSkipListConfig(string.Join(", ", tokens));
+            TrySaveConfig();
+            message = $"Removed from skippedItems: {token}";
+            return true;
+        }
+
+        public List<string> GetSkippedTokens()
+        {
+            return ParseSkipListTokens(skippedItems.Value)
+                .OrderBy(t => t)
+                .ToList();
+        }
+
         private bool ShouldSkip(GrabbableObject item)
         {
             if (item == null)
@@ -746,17 +898,15 @@ namespace QuickSort
             }
 
             string itemName = item.Name();
-            // Apply skip list based on scrap vs non-scrap so shop items aren't accidentally excluded.
-            string list = (item.itemProperties != null && item.itemProperties.isScrap)
-                ? skippedItems.Value
-                : (skippedNonScrapItems != null ? skippedNonScrapItems.Value : "");
+            // Apply skip list ONLY to scrap items.
+            string list = (item.itemProperties != null && item.itemProperties.isScrap) ? skippedItems.Value : "";
 
             if (!string.IsNullOrWhiteSpace(list))
             {
                 string[] skipped = list.Split(',');
                 foreach (string skippedItem in skipped)
                 {
-                    string token = skippedItem.Trim().ToLower();
+                    string token = NormalizeSkipToken(skippedItem);
                     if (string.IsNullOrWhiteSpace(token)) continue;
                     if (itemName.Contains(token))
                         return true;
@@ -768,7 +918,7 @@ namespace QuickSort
 
         // Full sort (/sort with no item name) uses skippedItems as a GLOBAL skip list,
         // regardless of scrap vs non-scrap, per user preference.
-        private bool ShouldSkipFullSort(GrabbableObject item)
+        private bool ShouldSkipFullSort(GrabbableObject item, bool ignoreSkipTokens = false)
         {
             if (item == null) return true;
 
@@ -781,18 +931,19 @@ namespace QuickSort
             if (!item.isInShipRoom)
                 return true;
 
+            if (ignoreSkipTokens)
+                return false;
+
             string itemName = item.Name();
 
-            // Combine skippedItems (global) + optional non-scrap list, so users can configure either.
+            // Global skip list (substring match). Note: only one list now.
             string list = skippedItems.Value;
-            if (skippedNonScrapItems != null && !string.IsNullOrWhiteSpace(skippedNonScrapItems.Value))
-                list = string.IsNullOrWhiteSpace(list) ? skippedNonScrapItems.Value : (list + "," + skippedNonScrapItems.Value);
 
             if (!string.IsNullOrWhiteSpace(list))
             {
                 foreach (string skippedItem in list.Split(','))
                 {
-                    string token = skippedItem.Trim().ToLower();
+                    string token = NormalizeSkipToken(skippedItem);
                     if (string.IsNullOrWhiteSpace(token)) continue;
                     if (itemName.Contains(token))
                         return true;
@@ -817,6 +968,12 @@ namespace QuickSort
             "Sorts items on the ship.\n" +
             "Usage:\n" +
             "  /sort                 -> sort everything\n" +
+            "  /sort -a              -> sort everything, IGNORE skippedItems\n" +
+            "  /sort -b              -> full sort, but DO NOT skip item types that have a saved /sort set position\n" +
+            "                       (Note: -a and -b cannot be combined)\n" +
+            "  /sort skip list       -> show skippedItems tokens\n" +
+            "  /sort skip add <name> -> add token to skippedItems (name can include spaces)\n" +
+            "  /sort skip remove <name> -> remove token from skippedItems\n" +
             "  /sort <itemName>      -> pull that item type to YOUR position (e.g. /sort cash_register)\n" +
             "  /sort <number>        -> shortcut from JSON (pull to you) (e.g. /sort 1)\n" +
             "  /sort bind <name|id>  -> bind your HELD item to an alias name OR shortcut id (then /sort <name> or /sort <id> works)\n" +
@@ -859,7 +1016,32 @@ namespace QuickSort
                 return false;
             }
 
-            string[] filteredArgs = args;
+            // Reject combined flags explicitly (users may try "/sort -ab")
+            if (args.Contains("-ab") || args.Contains("-ba"))
+            {
+                error = "Flags '-a' and '-b' cannot be combined. Use only one.";
+                return false;
+            }
+
+            // Flags:
+            // -a / -all: full sort but ignore skippedItems (sort everything)
+            // -b / -bound: full sort but include item types with saved /sort set positions even if skipped
+            bool ignoreSkippedItems =
+                args.Contains("-a") || args.Contains("-all") ||
+                (kwargs != null && (kwargs.ContainsKey("a") || kwargs.ContainsKey("all")));
+            bool includeSavedPositionTypesEvenIfSkipped =
+                args.Contains("-b") || args.Contains("-bound") ||
+                (kwargs != null && (kwargs.ContainsKey("b") || kwargs.ContainsKey("bound")));
+
+            if (ignoreSkippedItems && includeSavedPositionTypesEvenIfSkipped)
+            {
+                error = "Flags '-a' and '-b' cannot be combined. Use only one.";
+                return false;
+            }
+
+            string[] filteredArgs = args
+                .Where(a => a != "-a" && a != "-all" && a != "-b" && a != "-bound" && a != "-ab" && a != "-ba")
+                .ToArray();
 
             // Get Sorter instance from Plugin (Unity-safe null checks: destroyed objects compare == null,
             // but C# null-conditional (?.) does NOT use Unity's overloaded null semantics)
@@ -909,6 +1091,96 @@ namespace QuickSort
             // Subcommands / shortcuts / item name
             if (filteredArgs.Length > 0)
             {
+                if (filteredArgs[0] == "skip")
+                {
+                    // /sort skip list
+                    // /sort skip add <itemName...>
+                    // /sort skip remove <itemName...>
+                    if (filteredArgs.Length < 2)
+                    {
+                        error = "Usage: /sort skip <list|add|remove> ...";
+                        return false;
+                    }
+
+                    string sub = filteredArgs[1];
+                    if (sub == "list" || sub == "ls")
+                    {
+                        var tokens = sorter.GetSkippedTokens();
+                        if (tokens.Count == 0)
+                        {
+                            ChatCommandAPI.ChatCommandAPI.Print("skippedItems is empty.");
+                            return true;
+                        }
+
+                        string text = string.Join(", ", tokens.Take(20));
+                        if (tokens.Count > 20) text += ", ...";
+                        ChatCommandAPI.ChatCommandAPI.Print($"skippedItems ({tokens.Count}): {text}");
+                        return true;
+                    }
+
+                    // Allow using shortcut id or alias in addition to raw item name.
+                    string ResolveSkipTarget(string raw)
+                    {
+                        raw = (raw ?? "").Trim();
+                        if (string.IsNullOrWhiteSpace(raw)) return raw;
+
+                        if (int.TryParse(raw, out int shortcutId) && shortcutId > 0)
+                        {
+                            if (SortShortcuts.TryResolve(shortcutId, out var itemKey, out _))
+                                return itemKey;
+                            return raw;
+                        }
+
+                        if (SortShortcuts.TryResolveAlias(raw, out var aliasedKey, out _))
+                            return aliasedKey;
+
+                        return raw;
+                    }
+
+                    if (sub == "add")
+                    {
+                        string name = string.Join(" ", filteredArgs.Skip(2)).Trim();
+                        if (string.IsNullOrWhiteSpace(name))
+                        {
+                            name = (Player.Local?.currentlyHeldObjectServer as GrabbableObject)?.Name() ?? "";
+                            if (string.IsNullOrWhiteSpace(name))
+                            {
+                                error = "Usage: /sort skip add <itemName> (or hold an item)";
+                                return false;
+                            }
+                        }
+                        name = ResolveSkipTarget(name);
+                        if (!sorter.TrySkipAdd(name, out error, out var msg))
+                            return false;
+                        if (!string.IsNullOrWhiteSpace(msg))
+                            ChatCommandAPI.ChatCommandAPI.Print(msg);
+                        return true;
+                    }
+
+                    if (sub == "remove" || sub == "rm" || sub == "del")
+                    {
+                        string name = string.Join(" ", filteredArgs.Skip(2)).Trim();
+                        if (string.IsNullOrWhiteSpace(name))
+                        {
+                            name = (Player.Local?.currentlyHeldObjectServer as GrabbableObject)?.Name() ?? "";
+                            if (string.IsNullOrWhiteSpace(name))
+                            {
+                                error = "Usage: /sort skip remove <itemName> (or hold an item)";
+                                return false;
+                            }
+                        }
+                        name = ResolveSkipTarget(name);
+                        if (!sorter.TrySkipRemove(name, out error, out var msg))
+                            return false;
+                        if (!string.IsNullOrWhiteSpace(msg))
+                            ChatCommandAPI.ChatCommandAPI.Print(msg);
+                        return true;
+                    }
+
+                    error = "Usage: /sort skip <list|add|remove> ...";
+                    return false;
+                }
+
                 if (filteredArgs[0] == "bind")
                 {
                     // /sort bind <aliasName|id>
@@ -1140,9 +1412,12 @@ namespace QuickSort
             }
 
             // Default: full sort
-            sorter.CategorizeItems();
+            // If -a is set, we ignore skippedItems entirely.
+            // If -b is set, we must include skipped types in the scan so SortItems can selectively keep only
+            // the ones that have saved positions.
+            sorter.CategorizeItems(includeSkippedItems: (ignoreSkippedItems || includeSavedPositionTypesEvenIfSkipped));
             Log.ConfirmSound();
-            sorter.StartCoroutine(sorter.SortItems(force: false));
+            sorter.StartCoroutine(sorter.SortItems(force: false, ignoreSkippedItems: ignoreSkippedItems, includeSavedPositionTypesEvenIfSkipped: includeSavedPositionTypesEvenIfSkipped));
             QuickSort.Log.Info("SortCommand executed successfully (full sort)");
             return true;
         }
