@@ -61,9 +61,8 @@ namespace QuickSort
                 {
                     shortcuts = new List<Shortcut>
                     {
-                        new Shortcut { id = 1, item = "cash_register" },
-                        new Shortcut { id = 2, item = "gold_bar" },
-                        new Shortcut { id = 3, item = "v_type_engine" }
+                        new Shortcut { id = 1, item = "weed_killer" },
+                        new Shortcut { id = 2, item = "shovel" },
                     }
                 };
 
