@@ -1,7 +1,10 @@
 ## QuickSort (pasta.quicksort)
 
-[**English(Support)**](https://github.com/p-asta/lc-quicksort/blob/main/README.md) | **한국어**
+[**English(Support)**](https://github.com/p-asta/lc-quicksort/blob/main/README.md) | **한국어** <br/>
 Lethal Company용 함선 아이템 정렬 + 빠른 이동(끌어오기) 명령어 모드입니다.
+
+## 게스트(클라이언트) 사용 시 중요 안내
+게스트(클라이언트)로 플레이할 때, **[TooManyItems](https://thunderstore.io/c/lethal-company/p/mattymatty/TooManyItems/)** 를 설치하면 **일부 아이템이 정렬되지 않거나(스냅백)** 하는 문제가 없엘 수 있습니다.
 
 ## 명령어
 - **팁**: 명령어에 **`[itemName]`**처럼 대괄호로 표기되어 있으면 **아이템명은 선택사항**입니다. 생략하면(가능한 경우) **현재 손에 들고 있는 아이템**을 기준으로 동작합니다.
@@ -49,7 +52,11 @@ Lethal Company용 함선 아이템 정렬 + 빠른 이동(끌어오기) 명령�
 - **`/sort set [itemName]`**: 해당 타입의 정렬 위치를 내 현재 위치로 저장합니다 (**부분일치 지원**).
 - **`/ss [itemName]`**: `/sort set ...` 단축 명령 (**부분일치 지원**).
 - **`/sort reset [itemName]`**: 저장된 위치를 삭제합니다.
+- **`/sr [itemName]`**: `/sort reset ...` 단축 명령
 - **`/sort positions`**: 저장된 위치 목록을 출력합니다.
+- **`/sp`**: `/sort positions` 단축 명령
+- **`/sbl`**: `/sort bindings` 단축 명령
+- **`/sk ...`**: `/sort skip ...` 단축 명령 (예: `/sk list`, `/sk add ...`, `/sk remove ...`)
 
 ## 설정 / 파일
 모든 파일은 `BepInEx/config` 아래에 생성됩니다.
@@ -58,10 +65,18 @@ Lethal Company용 함선 아이템 정렬 + 빠른 이동(끌어오기) 명령�
 
 ## 참고
 - **아이템명 정규화**: 매칭을 위해 공백/하이픈은 언더스코어로 정규화됩니다. (예: `kitchen knife` → `kitchen_knife`)
+- **기본 입력 alias**:
+  - `double_barrel` → `shotgun`
+  - `shotgun_shell` → `ammo`
+- **특정 아이템 Y 오프셋(조금 더 낮게 배치)**:
+  - 전체 정렬(`/sort`) 시 아래 타입은 기본보다 조금 더 낮게 놓습니다: `toilet_paper`, `chemical_jug`, `cash_register`, `fancy_lamp`, `large_axle`, `v_type_engine`
 - **명시적 끌어오기는 스킵 무시**: `/sort <itemName>`는 해당 타입이 `skippedItems`에 있어도 동작합니다.
 - **레거시 설정 자동 수정**:
   - `skippedItems`에 예전 오타 `rader_booster`가 있으면 `radar_booster`로 자동 교정됩니다.
   - 토큰에 앞/뒤로 `_`가 붙어있으면(예: `_kitchen_knife`) 정규화됩니다.
+- **설정 마이그레이션(0.1.5)**:
+  - `configVersion`이 없거나 `0.1.5` 미만이고, `sortOriginY` 값이 `0.5`라면 `0.1`로 자동 변경됩니다.
+  - `skippedItems`에 `shotgun`, `ammo` 토큰이 없으면 자동으로 추가됩니다.
 
 ## SS
 ![alt text](https://raw.githubusercontent.com/P-Asta/lc-QuickSort/refs/heads/main/assets/image.png)

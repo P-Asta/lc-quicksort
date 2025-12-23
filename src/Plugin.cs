@@ -14,6 +14,7 @@ namespace QuickSort
     {
         public static ManualLogSource Log = null!;
         public static ConfigFile config;
+        public static ConfigEntry<string> configVersion = null!;
         public static Plugin Instance { get; private set; }
         private static Harmony harmony;
         public static GameObject sorterObject;
@@ -23,6 +24,49 @@ namespace QuickSort
             Instance = this;
             Log = Logger;
             config = Config;
+
+            // Config version (for migrations). If the key does not exist, BepInEx will create it with default.
+            // IMPORTANT: Bind() will CREATE the key if missing, so we must detect presence BEFORE binding.
+            bool hadConfigVersionKey = config.TryGetEntry<string>(new ConfigDefinition("General", "configVersion"), out _);
+            configVersion = config.Bind<string>("General", "configVersion", "0.1.5",
+                "Config schema version (used for internal migrations).");
+            bool needsSave = false;
+            string currentVer = configVersion.Value ?? "";
+            if (string.IsNullOrWhiteSpace(currentVer))
+            {
+                currentVer = "0.1.5";
+                configVersion.Value = currentVer;
+                needsSave = true;
+            }
+
+            // Migrations: if config is from an older version (or missing), adjust defaults safely.
+            // Requested migration: if sortOriginY is 0.5, change to 0.1.
+            if (!hadConfigVersionKey || IsVersionLessThan(currentVer, "0.1.5"))
+            {
+                var sortOriginY = config.Bind<float>("Sorter", "sortOriginY", 0.1f,
+                    "Y coordinate of the origin position for sorting items (relative to ship)");
+                if (Mathf.Abs(sortOriginY.Value - 0.5f) < 0.0001f)
+                {
+                    sortOriginY.Value = 0.1f;
+                    needsSave = true;
+                }
+
+                // Requested migration: add "shotgun" and "ammo" to skippedItems (if missing).
+                var skippedItems = config.Bind<string>("Sorter", "skippedItems", "",
+                    "SCRAP skip list (comma-separated, substring match). Only applies to scrap items.");
+                string migratedSkip = AddTokensToCommaList(skippedItems.Value, "shotgun", "ammo");
+                if (!string.Equals(migratedSkip, skippedItems.Value, System.StringComparison.Ordinal))
+                {
+                    skippedItems.Value = migratedSkip;
+                    needsSave = true;
+                }
+
+                configVersion.Value = "0.1.5";
+                needsSave = true;
+            }
+
+            if (needsSave)
+                config.Save();
 
             QuickSort.Log.Init(Logger);
             QuickSort.Log.Info("QuickSort - Item Sorter loading...");
@@ -43,6 +87,10 @@ namespace QuickSort
                 new QuickSort.SortCommand();
                 new QuickSort.SortBindCommand();
                 new QuickSort.SortSetCommand();
+                new QuickSort.SortResetCommand();
+                new QuickSort.SortPositionsCommand();
+                new QuickSort.SortBindingsListCommand();
+                new QuickSort.SortSkipCommand();
                 new QuickSort.PileCommand();
                 QuickSort.Log.Info("Sort command registered in Awake");
             }
@@ -85,6 +133,64 @@ namespace QuickSort
                 Destroy(sorterObject);
             }
         }
+
+        private static bool IsVersionLessThan(string a, string b)
+        {
+            // Very small semver-ish compare for x.y.z where missing parts are treated as 0.
+            static int[] Parse(string s)
+            {
+                if (string.IsNullOrWhiteSpace(s)) return new[] { 0, 0, 0 };
+                var parts = s.Trim().Split('.');
+                int[] v = new int[3];
+                for (int i = 0; i < 3; i++)
+                {
+                    if (i < parts.Length && int.TryParse(parts[i], out int n))
+                        v[i] = n;
+                    else
+                        v[i] = 0;
+                }
+                return v;
+            }
+
+            var va = Parse(a);
+            var vb = Parse(b);
+            for (int i = 0; i < 3; i++)
+            {
+                if (va[i] < vb[i]) return true;
+                if (va[i] > vb[i]) return false;
+            }
+            return false;
+        }
+
+        private static string AddTokensToCommaList(string? list, params string[] tokensToAdd)
+        {
+            // Normalize tokens to item-key style (underscores) and de-dupe.
+            var tokens = new System.Collections.Generic.List<string>();
+            var seen = new System.Collections.Generic.HashSet<string>();
+
+            void Add(string raw)
+            {
+                string t = (raw ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(t)) return;
+                t = QuickSort.Extensions.NormalizeName(t).Trim('_');
+                if (string.IsNullOrWhiteSpace(t)) return;
+                if (seen.Add(t)) tokens.Add(t);
+            }
+
+            if (!string.IsNullOrWhiteSpace(list))
+            {
+                foreach (var part in list.Split(','))
+                    Add(part);
+            }
+
+            if (tokensToAdd != null)
+            {
+                foreach (var raw in tokensToAdd)
+                    Add(raw);
+            }
+
+            return string.Join(", ", tokens);
+        }
     }
 
     public static class Startup
@@ -106,6 +212,10 @@ namespace QuickSort
                     new QuickSort.SortCommand();
                     new QuickSort.SortBindCommand();
                     new QuickSort.SortSetCommand();
+                    new QuickSort.SortResetCommand();
+                    new QuickSort.SortPositionsCommand();
+                    new QuickSort.SortBindingsListCommand();
+                    new QuickSort.SortSkipCommand();
                     new QuickSort.PileCommand();
                     commandRegistered = true;
                     QuickSort.Log.Info("Sort command registered");

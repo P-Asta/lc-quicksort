@@ -9,11 +9,47 @@ using UnityEngine.InputSystem.Controls;
 using Unity.Netcode;
 using ChatCommandAPI;
 using System;
+using System.Reflection;
 
 namespace QuickSort
 {
     public class Sorter : MonoBehaviour
     {
+        // Some specific bulky props behave better when placed slightly lower than the default computed floor+offset.
+        // NOTE: keys are normalized (underscores) to match item.Name().
+        private static readonly HashSet<string> LowerYOffsetTypes = new HashSet<string>
+        {
+            "toilet_paper",
+            "chemical_jug",
+            "cash_register",
+            "fancy_lamp",
+            "large_axle",
+            "v_type_engine",
+        };
+
+        private static bool ShouldLowerYOffset(GrabbableObject item)
+        {
+            if (item == null) return false;
+            string key = item.Name();
+            if (string.IsNullOrWhiteSpace(key)) return false;
+            return LowerYOffsetTypes.Contains(key);
+        }
+
+        // Default input aliases (no config): normalize common alternate internal names to the canonical type key.
+        private static string ApplyDefaultInputAliases(string normalizedKey)
+        {
+            if (string.IsNullOrWhiteSpace(normalizedKey)) return normalizedKey;
+
+            // User request:
+            // - double_barrel -> shotgun
+            // - shotgun_shell -> ammo
+            return normalizedKey switch
+            {
+                "double_barrel" => "shotgun",
+                "shotgun_shell" => "ammo",
+                _ => normalizedKey
+            };
+        }
         public ConfigEntry<float> sortOriginX;
         public ConfigEntry<float> sortOriginY;
         public ConfigEntry<float> sortOriginZ;
@@ -37,7 +73,7 @@ namespace QuickSort
         {
             sortOriginX = Plugin.config.Bind<float>("Sorter", "sortOriginX", -2.8f,
                 "X coordinate of the origin position for sorting items (relative to ship)");
-            sortOriginY = Plugin.config.Bind<float>("Sorter", "sortOriginY", 0.5f,
+            sortOriginY = Plugin.config.Bind<float>("Sorter", "sortOriginY", 0.1f,
                 "Y coordinate of the origin position for sorting items (relative to ship)");
             sortOriginZ = Plugin.config.Bind<float>("Sorter", "sortOriginZ", -4.8f,
                 "Z coordinate of the origin position for sorting items (relative to ship)");
@@ -50,7 +86,7 @@ namespace QuickSort
             // NOTE: This setting historically applied to all items, which caused confusion and made
             // shop items (shovel, pro_flashlight, etc.) appear "unsortable" if users added them here.
             // It now applies ONLY to scrap items.
-            skippedItems = Plugin.config.Bind<string>("Sorter", "skippedItems", "body, clipboard, sticky_note, boombox, shovel, jetpack, flashlight, pro_flashlight, key, stun_grenade, lockpicker, mapper, extension_ladder, tzp_inhalant, walkie_talkie, zap_gun, kitchen_knife, weed_killer, radar_booster, spray_paint, belt_bag",
+            skippedItems = Plugin.config.Bind<string>("Sorter", "skippedItems", "body, clipboard, sticky_note, boombox, shovel, jetpack, flashlight, pro_flashlight, key, stun_grenade, lockpicker, mapper, extension_ladder, tzp_inhalant, walkie_talkie, zap_gun, kitchen_knife, weed_killer, radar_booster, spray_paint, belt_bag, shotgun, ammo",
                 "SCRAP skip list (comma-separated, substring match). Only applies to scrap items.");
 
             // Legacy config migration / normalization:
@@ -166,15 +202,27 @@ namespace QuickSort
                 groupedItems[itemName].Add(item);
             }
 
+            // Sort type order BEFORE layout:
+            // - Two-handed (bulky) item types first (no config; always enabled)
+            // - Then by item key/name for deterministic ordering
+            // Note: we include reserved/custom-position types in the ordering list so they are still processed,
+            // but CreateLayout will skip them without consuming normal slots.
+            var orderedGroups = groupedItems
+                .OrderByDescending(kvp => kvp.Value != null && kvp.Value.Any(IsTwoHandedItem))
+                .ThenBy(kvp => kvp.Key)
+                .ToList();
+            List<string> orderedTypeNames = orderedGroups.Select(kvp => kvp.Key).ToList();
+
             // Create layout for non-custom-position item types only.
             // If a type has a saved position override, it should NOT consume a slot in the normal layout,
             // otherwise the layout will "skip" a spot (empty hole) where that type would have been.
             HashSet<string>? reservedTypes = savedTypes;
 
             // Vector3: x = offsetX, y = typeLayerY, z = offsetZ
-            Dictionary<string, Vector3> layout = CreateLayout(groupedItems.Keys.ToList(), reservedTypes);
+            Dictionary<string, Vector3> layout = CreateLayout(orderedTypeNames, reservedTypes);
 
-            foreach (var group in groupedItems)
+            // Process groups in the same deterministic order as layout (two-handed first)
+            foreach (var group in orderedGroups)
             {
                 string itemName = group.Key;
                 List<GrabbableObject> items = group.Value;
@@ -197,6 +245,9 @@ namespace QuickSort
                 // If a custom position is set, we treat it as an absolute target (no layout-based Y paging).
                 float customYOffset = hasCustomPos ? customShipLocal.y : 0f;
                 float typeLayerYOffset = hasCustomPos ? 0f : typePos.y;
+                // Apply the configured sort origin Y as an additional offset ABOVE the detected ground,
+                // but ONLY for non-custom-position types. Custom positions are treated as absolute.
+                float originYOffset = hasCustomPos ? 0f : originLocal.y;
                 float groundYLocal = pileCenterLocal.y;
                 {
                     Vector3 rayStartCenter = ship.transform.TransformPoint(pileCenterLocal + Vector3.up * 2f);
@@ -251,7 +302,8 @@ namespace QuickSort
                     // - Y starts from the ground at pile center + item verticalOffset, then layers stack upward
                     Vector3 targetLocal = new Vector3(
                         pileCenterLocal.x + pileX,
-                        groundYLocal + (item.itemProperties.verticalOffset - 0.05f) + (typeLayerYOffset + customYOffset) + pileY,
+                        (groundYLocal + originYOffset + (item.itemProperties.verticalOffset - 0.1f) + (typeLayerYOffset + customYOffset) + pileY)
+                        - (ShouldLowerYOffset(item) ? 0.2f : 0f),
                         pileCenterLocal.z + pileZ
                     );
 
@@ -286,6 +338,63 @@ namespace QuickSort
 
             Log.Chat("Sorting complete!", "00FF00");
             inProgress = false;
+        }
+
+        // Prefer compile-time access when possible, but use reflection to be resilient across game versions
+        // / publicizer output changes. If we can't find the flag, we default to false.
+        private static bool IsTwoHandedItem(GrabbableObject item)
+        {
+            try
+            {
+                if (item == null) return false;
+                var props = item.itemProperties;
+                if (props == null) return false;
+
+                var t = props.GetType();
+                const BindingFlags FLAGS = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+                // Most common in Lethal Company:
+                // - field: twoHanded (bool)
+                // Less common/legacy/modded:
+                // - field/property: isTwoHanded, twoHandedItem
+                var f =
+                    t.GetField("twoHanded", FLAGS) ??
+                    t.GetField("isTwoHanded", FLAGS) ??
+                    t.GetField("twoHandedItem", FLAGS) ??
+                    t.GetField("<twoHanded>k__BackingField", FLAGS) ??
+                    t.GetField("<isTwoHanded>k__BackingField", FLAGS) ??
+                    t.GetField("<twoHandedItem>k__BackingField", FLAGS);
+                if (f != null && f.FieldType == typeof(bool))
+                    return (bool)f.GetValue(props);
+
+                var p =
+                    t.GetProperty("twoHanded", FLAGS) ??
+                    t.GetProperty("isTwoHanded", FLAGS) ??
+                    t.GetProperty("twoHandedItem", FLAGS);
+                if (p != null && p.PropertyType == typeof(bool) && p.GetIndexParameters().Length == 0)
+                    return (bool)p.GetValue(props, null);
+
+                // Fallback: look for any bool field/property whose name contains "twohand" (case-insensitive).
+                foreach (var field in t.GetFields(FLAGS))
+                {
+                    if (field.FieldType != typeof(bool)) continue;
+                    if (field.Name.IndexOf("twohand", StringComparison.OrdinalIgnoreCase) >= 0)
+                        return (bool)field.GetValue(props);
+                }
+
+                foreach (var prop in t.GetProperties(FLAGS))
+                {
+                    if (prop.PropertyType != typeof(bool)) continue;
+                    if (prop.GetIndexParameters().Length != 0) continue;
+                    if (prop.Name.IndexOf("twohand", StringComparison.OrdinalIgnoreCase) >= 0)
+                        return (bool)prop.GetValue(props, null);
+                }
+
+                return false;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         public bool TryStartGatherByQuery(string query, bool force, out string? error)
@@ -346,7 +455,14 @@ namespace QuickSort
             }
 
             Vector3 targetWithOffset = new Vector3(targetLocal.x, targetLocal.y - groundYLocal, targetLocal.z);
-            StartCoroutine(MoveItemsOfTypeToPosition(resolved, targetWithOffset, force, announce: true, ignoreSkipLists: true));
+            StartCoroutine(MoveItemsOfTypeToPosition(
+                resolved,
+                targetWithOffset,
+                force,
+                announce: true,
+                ignoreSkipLists: true,
+                applyTwoHandedSortYOffset: true
+            ));
             return true;
         }
 
@@ -548,7 +664,7 @@ namespace QuickSort
             resolvedKey = "";
             error = null;
 
-            string q = Extensions.NormalizeName(query);
+            string q = ApplyDefaultInputAliases(Extensions.NormalizeName(query));
             if (string.IsNullOrWhiteSpace(q))
             {
                 error = "Invalid item name";
@@ -644,7 +760,14 @@ namespace QuickSort
             return true;
         }
 
-        private IEnumerator MoveItemsOfTypeToPosition(string itemKey, Vector3 targetCenterShipLocal, bool force, bool announce, bool ignoreSkipLists = false)
+        private IEnumerator MoveItemsOfTypeToPosition(
+            string itemKey,
+            Vector3 targetCenterShipLocal,
+            bool force,
+            bool announce,
+            bool ignoreSkipLists = false,
+            bool applyTwoHandedSortYOffset = false
+        )
         {
             inProgress = true;
             if (announce)
@@ -749,7 +872,7 @@ namespace QuickSort
 
                 Vector3 targetLocal = new Vector3(
                     pileCenterLocal.x + pileX,
-                    groundYLocal + (item.itemProperties.verticalOffset - 0.05f) + extraYOffset + pileY,
+                    (groundYLocal + (item.itemProperties.verticalOffset - 0.05f) + extraYOffset + pileY),
                     pileCenterLocal.z + pileZ
                 );
 
@@ -798,8 +921,8 @@ namespace QuickSort
         {
             Dictionary<string, Vector3> layout = new Dictionary<string, Vector3>();
 
-            // Sort items by name for consistent ordering
-            itemNames = itemNames.OrderBy(name => name).ToList();
+            // IMPORTANT: itemNames are expected to be pre-sorted by the caller.
+            // (We need to preserve "two-handed first" ordering.)
 
             // User request: do NOT advance Z for type layout (prevents pushing into doors/walls).
             // Types spread only on X (left/right). If there are too many types, we go UP on Y and restart from first X.
@@ -1570,6 +1693,10 @@ namespace QuickSort
     // Short commands:
     // - /sb ... == /sort bind ...
     // - /ss ... == /sort set ...
+    // - /sr ... == /sort reset ...
+    // - /sp      == /sort positions
+    // - /sbl     == /sort bindings
+    // - /sk ...  == /sort skip ...
     public class SortBindCommand : Command
     {
         public override string Name => "sb";
@@ -1599,6 +1726,73 @@ namespace QuickSort
         public override bool Invoke(string[] args, Dictionary<string, string> kwargs, out string? error)
         {
             var forwarded = new[] { "set" }.Concat(args ?? Array.Empty<string>()).ToArray();
+            return new SortCommand().Invoke(forwarded, kwargs, out error);
+        }
+    }
+
+    public class SortResetCommand : Command
+    {
+        public override string Name => "sr";
+        public override string[] Commands => new[] { "sr", Name };
+        public override string Description =>
+            "Shortcut for /sort reset\n" +
+            "Usage:\n" +
+            "  /sr [itemName]  -> delete saved sort position for this type (name optional if holding)";
+
+        public override bool Invoke(string[] args, Dictionary<string, string> kwargs, out string? error)
+        {
+            var forwarded = new[] { "reset" }.Concat(args ?? Array.Empty<string>()).ToArray();
+            return new SortCommand().Invoke(forwarded, kwargs, out error);
+        }
+    }
+
+    public class SortPositionsCommand : Command
+    {
+        public override string Name => "sp";
+        public override string[] Commands => new[] { "sp", Name };
+        public override string Description =>
+            "Shortcut for /sort positions\n" +
+            "Usage:\n" +
+            "  /sp  -> list saved sort positions";
+
+        public override bool Invoke(string[] args, Dictionary<string, string> kwargs, out string? error)
+        {
+            // Ignore args; keep behavior deterministic
+            var forwarded = new[] { "positions" };
+            return new SortCommand().Invoke(forwarded, kwargs, out error);
+        }
+    }
+
+    public class SortBindingsListCommand : Command
+    {
+        public override string Name => "sbl";
+        public override string[] Commands => new[] { "sbl", Name };
+        public override string Description =>
+            "Shortcut for /sort bindings\n" +
+            "Usage:\n" +
+            "  /sbl  -> list bindings (shortcuts + aliases)";
+
+        public override bool Invoke(string[] args, Dictionary<string, string> kwargs, out string? error)
+        {
+            var forwarded = new[] { "bindings" };
+            return new SortCommand().Invoke(forwarded, kwargs, out error);
+        }
+    }
+
+    public class SortSkipCommand : Command
+    {
+        public override string Name => "sk";
+        public override string[] Commands => new[] { "sk", Name };
+        public override string Description =>
+            "Shortcut for /sort skip\n" +
+            "Usage:\n" +
+            "  /sk list            -> show skippedItems tokens\n" +
+            "  /sk add [itemName]  -> add token (or use held item if omitted)\n" +
+            "  /sk remove [itemName] -> remove token (or use held item if omitted)";
+
+        public override bool Invoke(string[] args, Dictionary<string, string> kwargs, out string? error)
+        {
+            var forwarded = new[] { "skip" }.Concat(args ?? Array.Empty<string>()).ToArray();
             return new SortCommand().Invoke(forwarded, kwargs, out error);
         }
     }
