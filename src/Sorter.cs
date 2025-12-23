@@ -77,11 +77,11 @@ namespace QuickSort
                 "Y coordinate of the origin position for sorting items (relative to ship)");
             sortOriginZ = Plugin.config.Bind<float>("Sorter", "sortOriginZ", -4.8f,
                 "Z coordinate of the origin position for sorting items (relative to ship)");
-            itemSpacing = Plugin.config.Bind<float>("Sorter", "itemSpacing", 1f,
+            itemSpacing = Plugin.config.Bind<float>("Sorter", "itemSpacing", 0.8f,
                 "Spacing between items horizontally");
             rowSpacing = Plugin.config.Bind<float>("Sorter", "rowSpacing", 0.8f,
                 "Spacing between rows vertically");
-            itemsPerRow = Plugin.config.Bind<int>("Sorter", "itemsPerRow", 7,
+            itemsPerRow = Plugin.config.Bind<int>("Sorter", "itemsPerRow", 9,
                 "Number of items per row");
             // NOTE: This setting historically applied to all items, which caused confusion and made
             // shop items (shovel, pro_flashlight, etc.) appear "unsortable" if users added them here.
