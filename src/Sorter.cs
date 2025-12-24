@@ -15,6 +15,10 @@ namespace QuickSort
 {
     public class Sorter : MonoBehaviour
     {
+        // Keep this in one place so config defaults and migrations stay consistent.
+        public const string DefaultSkippedItems =
+            "body, clipboard, sticky_note, boombox, shovel, jetpack, flashlight, pro_flashlight, key, stun_grenade, lockpicker, mapper, extension_ladder, tzp_inhalant, walkie_talkie, zap_gun, kitchen_knife, weed_killer, radar_booster, spray_paint, belt_bag, shotgun, ammo";
+
         // Some specific bulky props behave better when placed slightly lower than the default computed floor+offset.
         // NOTE: keys are normalized (underscores) to match item.Name().
         private static readonly HashSet<string> LowerYOffsetTypes = new HashSet<string>
@@ -83,11 +87,11 @@ namespace QuickSort
                 "Spacing between rows vertically");
             itemsPerRow = Plugin.config.Bind<int>("Sorter", "itemsPerRow", 9,
                 "Number of items per row");
-            // NOTE: This setting historically applied to all items, which caused confusion and made
-            // shop items (shovel, pro_flashlight, etc.) appear "unsortable" if users added them here.
-            // It now applies ONLY to scrap items.
-            skippedItems = Plugin.config.Bind<string>("Sorter", "skippedItems", "body, clipboard, sticky_note, boombox, shovel, jetpack, flashlight, pro_flashlight, key, stun_grenade, lockpicker, mapper, extension_ladder, tzp_inhalant, walkie_talkie, zap_gun, kitchen_knife, weed_killer, radar_booster, spray_paint, belt_bag, shotgun, ammo",
-                "SCRAP skip list (comma-separated, substring match). Only applies to scrap items.");
+            // NOTE: Global skip list used by full sort (/sort) and the general scan.
+            // Tokens are stored as canonical item keys (underscores), and some legacy/internal names
+            // are normalized (e.g. double_barrel -> shotgun, shotgun_shell -> ammo).
+            skippedItems = Plugin.config.Bind<string>("Sorter", "skippedItems", DefaultSkippedItems,
+                "Global skip list (comma-separated, substring match). Applies to all grabbable items.");
 
             // Legacy config migration / normalization:
             // - Old versions had a typo: "rader_booster" (should be "radar_booster")
@@ -1055,6 +1059,9 @@ namespace QuickSort
             if (string.IsNullOrWhiteSpace(s)) return "";
             // Normalize to item-key style (spaces/hyphens -> underscores)
             string token = Extensions.NormalizeName(s);
+            // Canonicalize legacy/internal names so config is stored consistently
+            // and matches user-facing keys (shotgun/ammo).
+            token = ApplyDefaultInputAliases(token);
             // Fix bug: leading/trailing underscores caused by leading/trailing spaces in user input
             token = token.Trim('_');
             // Legacy typo fix
@@ -1158,8 +1165,8 @@ namespace QuickSort
             }
 
             string itemName = item.Name();
-            // Apply skip list ONLY to scrap items.
-            string list = (item.itemProperties != null && item.itemProperties.isScrap) ? skippedItems.Value : "";
+            // Apply skip list to ALL items (global).
+            string list = skippedItems.Value;
 
             if (!string.IsNullOrWhiteSpace(list))
             {
@@ -1168,7 +1175,10 @@ namespace QuickSort
                 {
                     string token = NormalizeSkipToken(skippedItem);
                     if (string.IsNullOrWhiteSpace(token)) continue;
-                    if (itemName.Contains(token))
+
+                    // Match against canonicalized item key as well, to support legacy/internal names.
+                    string itemKey = ApplyDefaultInputAliases(itemName);
+                    if (itemKey.Contains(token))
                         return true;
                 }
             }

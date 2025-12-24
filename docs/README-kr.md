@@ -65,6 +65,7 @@ Lethal Company용 함선 아이템 정렬 + 빠른 이동(끌어오기) 명령�
 
 ## 참고
 - **아이템명 정규화**: 매칭을 위해 공백/하이픈은 언더스코어로 정규화됩니다. (예: `kitchen knife` → `kitchen_knife`)
+- **한국어 패치(로컬라이즈) 호환**: 일부 한국어 아이템명 입력도 자동으로 영문 키로 인식합니다. 예: `머그잔`→`coffee_mug`, `쿠키 틀`→`cookie_mold_pan`, `식칼`→`kitchen_knife`, `산탄총`→`shotgun`.
 - **기본 입력 alias**:
   - `double_barrel` → `shotgun`
   - `shotgun_shell` → `ammo`
@@ -77,6 +78,8 @@ Lethal Company용 함선 아이템 정렬 + 빠른 이동(끌어오기) 명령�
 - **설정 마이그레이션(0.1.5)**:
   - `configVersion`이 없거나 `0.1.5` 미만이고, `sortOriginY` 값이 `0.5`라면 `0.1`로 자동 변경됩니다.
   - `skippedItems`에 `shotgun`, `ammo` 토큰이 없으면 자동으로 추가됩니다.
+- **설정 마이그레이션(0.1.7)**:
+  - `skippedItems`가 실수로 `shotgun, ammo`만 들어있는 경우, 기본 목록으로 되돌립니다.
 
 ## SS
 ![alt text](https://raw.githubusercontent.com/P-Asta/lc-QuickSort/refs/heads/main/assets/image.png)

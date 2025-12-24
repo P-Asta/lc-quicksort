@@ -4,6 +4,7 @@ using BepInEx.Logging;
 using HarmonyLib;
 using UnityEngine;
 using GameNetcodeStuff;
+using System.IO;
 
 namespace QuickSort
 {
@@ -12,6 +13,8 @@ namespace QuickSort
     [BepInPlugin("pasta.quicksort", "QuickSort", "1.0.0")]
     public class Plugin : BaseUnityPlugin
     {
+        private const string CurrentConfigSchemaVersion = "0.1.7";
+
         public static ManualLogSource Log = null!;
         public static ConfigFile config;
         public static ConfigEntry<string> configVersion = null!;
@@ -27,21 +30,26 @@ namespace QuickSort
 
             // Config version (for migrations). If the key does not exist, BepInEx will create it with default.
             // IMPORTANT: Bind() will CREATE the key if missing, so we must detect presence BEFORE binding.
+            bool configFileExistedBeforeBind = File.Exists(config.ConfigFilePath);
             bool hadConfigVersionKey = config.TryGetEntry<string>(new ConfigDefinition("General", "configVersion"), out _);
-            configVersion = config.Bind<string>("General", "configVersion", "0.1.5",
+            configVersion = config.Bind<string>("General", "configVersion", CurrentConfigSchemaVersion,
                 "Config schema version (used for internal migrations).");
             bool needsSave = false;
             string currentVer = configVersion.Value ?? "";
             if (string.IsNullOrWhiteSpace(currentVer))
             {
-                currentVer = "0.1.5";
+                // Treat blank as "unknown legacy" so migrations can run (but do not assume fresh install).
+                currentVer = "0.0.0";
                 configVersion.Value = currentVer;
                 needsSave = true;
             }
 
             // Migrations: if config is from an older version (or missing), adjust defaults safely.
             // Requested migration: if sortOriginY is 0.5, change to 0.1.
-            if (!hadConfigVersionKey || IsVersionLessThan(currentVer, "0.1.5"))
+            // NOTE: If config file does not exist, this is a fresh install: do NOT create/overwrite keys here.
+            bool shouldRunMigrations = configFileExistedBeforeBind && (!hadConfigVersionKey || IsVersionLessThan(currentVer, CurrentConfigSchemaVersion));
+
+            if (shouldRunMigrations && (!hadConfigVersionKey || IsVersionLessThan(currentVer, "0.1.5")))
             {
                 var sortOriginY = config.Bind<float>("Sorter", "sortOriginY", 0.1f,
                     "Y coordinate of the origin position for sorting items (relative to ship)");
@@ -52,16 +60,35 @@ namespace QuickSort
                 }
 
                 // Requested migration: add "shotgun" and "ammo" to skippedItems (if missing).
-                var skippedItems = config.Bind<string>("Sorter", "skippedItems", "",
-                    "SCRAP skip list (comma-separated, substring match). Only applies to scrap items.");
+                var skippedItems = config.Bind<string>("Sorter", "skippedItems", Sorter.DefaultSkippedItems,
+                    "Global skip list (comma-separated, substring match). Applies to all grabbable items.");
                 string migratedSkip = AddTokensToCommaList(skippedItems.Value, "shotgun", "ammo");
                 if (!string.Equals(migratedSkip, skippedItems.Value, System.StringComparison.Ordinal))
                 {
                     skippedItems.Value = migratedSkip;
                     needsSave = true;
                 }
+            }
 
-                configVersion.Value = "0.1.5";
+            // 0.1.7 migration:
+            // Bugfix: some users ended up with skippedItems == "shotgun, ammo" only (typically created on first run).
+            // If that exact case is detected, reset to the real default list.
+            if (shouldRunMigrations && (!hadConfigVersionKey || IsVersionLessThan(currentVer, "0.1.7")))
+            {
+                if (config.TryGetEntry<string>(new ConfigDefinition("Sorter", "skippedItems"), out var existingSkipped))
+                {
+                    if (IsOnlyShotgunAmmo(existingSkipped.Value))
+                    {
+                        existingSkipped.Value = Sorter.DefaultSkippedItems;
+                        needsSave = true;
+                    }
+                }
+            }
+
+            // After all migrations, record current schema version for existing configs.
+            if (shouldRunMigrations && (!string.Equals(configVersion.Value, CurrentConfigSchemaVersion, System.StringComparison.Ordinal)))
+            {
+                configVersion.Value = CurrentConfigSchemaVersion;
                 needsSave = true;
             }
 
@@ -190,6 +217,28 @@ namespace QuickSort
             }
 
             return string.Join(", ", tokens);
+        }
+
+        private static bool IsOnlyShotgunAmmo(string? list)
+        {
+            var seen = new System.Collections.Generic.HashSet<string>();
+
+            void Add(string raw)
+            {
+                string t = (raw ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(t)) return;
+                t = QuickSort.Extensions.NormalizeName(t).Trim('_');
+                if (string.IsNullOrWhiteSpace(t)) return;
+                seen.Add(t);
+            }
+
+            if (!string.IsNullOrWhiteSpace(list))
+            {
+                foreach (var part in list.Split(','))
+                    Add(part);
+            }
+
+            return seen.Count == 2 && seen.Contains("shotgun") && seen.Contains("ammo");
         }
     }
 

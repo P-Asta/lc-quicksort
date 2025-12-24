@@ -1,5 +1,11 @@
 ## Changelog
 
+### 0.1.7
+- **Config**:
+  - Bumped `General.configVersion` to `0.1.7`.
+  - Migration: if `Sorter.skippedItems` is accidentally only `shotgun, ammo`, it is reset back to the full default list.
+  - Fresh install fix: when the config file does not exist yet, migrations no longer create/overwrite `Sorter.skippedItems`.
+
 ### 0.1.5
 - **Client/Guest tip**: Installing **[TooManyItems](https://thunderstore.io/c/lethal-company/p/mattymatty/TooManyItems/)** may help with a vanilla issue where some items fail to sort / snap back.
 - **New short commands**:

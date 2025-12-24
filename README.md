@@ -65,6 +65,7 @@ All files are created under `BepInEx/config`.
 
 ## Notes
 - **Item name normalization**: spaces/hyphens are normalized to underscores for matching (e.g. `kitchen knife` → `kitchen_knife`).
+- **Korean patch compatibility**: some Korean item name inputs are recognized as aliases (e.g. `머그잔`→`coffee_mug`, `쿠키 틀`→`cookie_mold_pan`, `식칼`→`kitchen_knife`, `산탄총`→`shotgun`).
 - **Built-in input aliases**:
   - `double_barrel` → `shotgun`
   - `shotgun_shell` → `ammo`
@@ -77,6 +78,8 @@ All files are created under `BepInEx/config`.
 - **Config migration (0.1.5)**:
   - If `configVersion` is missing / older than `0.1.5`, and `sortOriginY` is `0.5`, it will be auto-changed to `0.1`.
   - Also adds `shotgun`, `ammo` into `skippedItems` (if missing).
+- **Config migration (0.1.7)**:
+  - If `skippedItems` is accidentally only `shotgun, ammo`, it is reset back to the full default list.
 
 ## SS
 ![alt text](https://raw.githubusercontent.com/P-Asta/lc-QuickSort/refs/heads/main/assets/image.png)

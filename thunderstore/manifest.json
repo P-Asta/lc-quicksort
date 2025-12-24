@@ -1,6 +1,6 @@
 {
   "name": "QuickSort",
-  "version_number": "0.1.6",
+  "version_number": "0.1.7",
   "website_url": "https://github.com/P-Asta/lc-quicksort",
   "description": "Ship item sorting + quick move commands for Lethal Company.",
   "dependencies": [
