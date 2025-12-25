@@ -3,6 +3,8 @@
 ### 0.1.8
 - **Fix**:
   - `/sort`: now drops your held item first, then runs full sort.
+- **Behavior**:
+  - Commands now require you to be **inside the ship** (otherwise an error is shown): `/sort` (and `/ss`, `/sr`, `/sp`, `/sk`, `/sb`, `/sbl`) and `/pile`.
 
 ### 0.1.7
 - **Config**:

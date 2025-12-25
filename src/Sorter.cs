@@ -73,6 +73,90 @@ namespace QuickSort
         private Vector3 SortOrigin => new Vector3(sortOriginX.Value, sortOriginY.Value, sortOriginZ.Value);
         private bool CanSort => Ship.InOrbit || Ship.Stationary;
 
+        internal static bool EnsureLocalPlayerInShip(out string? error)
+        {
+            error = null;
+
+            var player = Player.Local;
+            if (player == null)
+            {
+                error = "Local player not ready yet";
+                return false;
+            }
+
+            // Prefer a real game flag if present (varies by LC version / publicizer output).
+            try
+            {
+                var t = player.GetType();
+
+                static bool? TryGetBool(object obj, Type type, string name)
+                {
+                    const BindingFlags FLAGS2 = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+                    var f = type.GetField(name, FLAGS2);
+                    if (f != null && f.FieldType == typeof(bool))
+                        return (bool)f.GetValue(obj);
+
+                    var p = type.GetProperty(name, FLAGS2);
+                    if (p != null && p.PropertyType == typeof(bool) && p.GetIndexParameters().Length == 0)
+                        return (bool)p.GetValue(obj, null);
+
+                    return null;
+                }
+
+                // Common names across versions/mod loaders (best-effort).
+                string[] candidates =
+                {
+                    "isInHangarShipRoom",
+                    "IsInHangarShipRoom",
+                    "isInShipRoom",
+                    "IsInShipRoom",
+                    "inShipRoom",
+                    "InShipRoom",
+                };
+
+                foreach (var c in candidates)
+                {
+                    bool? v = TryGetBool(player, t, c);
+                    if (v.HasValue)
+                    {
+                        if (!v.Value)
+                        {
+                            error = "You must be inside the ship to use this command.";
+                            return false;
+                        }
+                        return true;
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore and fall back to positional check.
+            }
+
+            // Fallback: approximate check using ship-local bounds.
+            GameObject ship = GameObject.Find("Environment/HangarShip");
+            if (ship == null)
+            {
+                error = "Ship not found";
+                return false;
+            }
+
+            Vector3 local = ship.transform.InverseTransformPoint(player.transform.position);
+            // Conservative bounds around the hangar ship interior.
+            bool inside =
+                local.x >= -10f && local.x <= 10f &&
+                local.z >= -20f && local.z <= 10f &&
+                local.y >= -6f && local.y <= 10f;
+
+            if (!inside)
+            {
+                error = "You must be inside the ship to use this command.";
+                return false;
+            }
+
+            return true;
+        }
+
         private void Awake()
         {
             sortOriginX = Plugin.config.Bind<float>("Sorter", "sortOriginX", -2.8f,
@@ -1304,6 +1388,13 @@ namespace QuickSort
                 return false;
             }
 
+            if (!Sorter.EnsureLocalPlayerInShip(out var shipErr))
+            {
+                error = shipErr ?? "You must be inside the ship to use this command.";
+                QuickSort.Log.Warning($"SortCommand failed: {error}");
+                return false;
+            }
+
             if (Sorter.inProgress)
             {
                 error = "Operation in progress";
@@ -1858,6 +1949,18 @@ namespace QuickSort
             {
                 ChatCommandAPI.ChatCommandAPI.Print(Description);
                 return true;
+            }
+
+            if (!Ship.Stationary)
+            {
+                error = "Must be in orbit or stationary at company";
+                return false;
+            }
+
+            if (!Sorter.EnsureLocalPlayerInShip(out var shipErr))
+            {
+                error = shipErr ?? "You must be inside the ship to use this command.";
+                return false;
             }
 
             // Get Sorter instance from Plugin (Unity-safe null checks)
