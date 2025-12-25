@@ -172,6 +172,39 @@ namespace QuickSort
                 yield break;
             }
 
+            // User preference: for FULL sort (/sort), if you're holding an item, drop it first.
+            // This avoids holding state interfering with mass moves and matches "drop then sort" expectations.
+            var dropWaitPlayer = Player.Local;
+            bool shouldWaitForDrop = false;
+            try
+            {
+                var held = dropWaitPlayer != null ? dropWaitPlayer.currentlyHeldObjectServer as GrabbableObject : null;
+                if (dropWaitPlayer != null && held != null)
+                {
+                    var shipNetObj = ship.GetComponent<NetworkObject>();
+                    Vector3 heldShipLocal = ship.transform.InverseTransformPoint(held.transform.position);
+                    held.floorYRot = -1;
+                    dropWaitPlayer.DiscardHeldObject(true, shipNetObj, heldShipLocal, false);
+                    shouldWaitForDrop = true;
+                }
+            }
+            catch (Exception e)
+            {
+                Log.Warning($"Failed to drop held item before /sort: {e.Message}");
+            }
+
+            // Wait briefly for the held slot to clear before continuing.
+            if (shouldWaitForDrop && dropWaitPlayer != null)
+            {
+                const int maxFrames = 30;
+                int frames = 0;
+                while (frames < maxFrames && dropWaitPlayer.currentlyHeldObjectServer != null)
+                {
+                    frames++;
+                    yield return null;
+                }
+            }
+
             Vector3 originLocal = SortOrigin; // ship-local origin
 
             // Load saved custom positions ONCE (used for layout + optional skip override with -b)

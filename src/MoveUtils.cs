@@ -6,6 +6,18 @@ namespace QuickSort
 {
     internal static class MoveUtils
     {
+        private static bool ShouldAvoidHeldSideEffects(PlayerControllerB player, GrabbableObject targetItem)
+        {
+            if (player == null) return true;
+            if (targetItem == null) return true;
+
+            // On some LC versions, calling SetObjectAsNoLongerHeld while the player is holding *another* item
+            // can cause the currently held item to be dropped. We only want to "no longer held" the target
+            // item when it is actually the one being held (or when the player is holding nothing).
+            var held = player.currentlyHeldObjectServer as GrabbableObject;
+            return held != null && held != targetItem;
+        }
+
         /// <summary>
         /// LethalShipSort-style move: force the server to update item position by using PlayerControllerB
         /// methods that already replicate state (prevents snap-back).
@@ -28,7 +40,10 @@ namespace QuickSort
             item.transform.position = worldPos;
 
             // Force Netcode sync via existing RPCs
-            player.SetObjectAsNoLongerHeld(true, true, shipLocalPos, item, floorYRot);
+            if (!ShouldAvoidHeldSideEffects(player, item))
+            {
+                player.SetObjectAsNoLongerHeld(true, true, shipLocalPos, item, floorYRot);
+            }
             player.ThrowObjectServerRpc(item.NetworkObject, true, true, shipLocalPos, floorYRot);
 
             return true;
@@ -54,7 +69,10 @@ namespace QuickSort
             // PlaceObjectServerRpc is a more direct "place this object at shipLocalPos" path.
             try
             {
-                player.SetObjectAsNoLongerHeld(true, true, shipLocalPos, item, floorYRot);
+                if (!ShouldAvoidHeldSideEffects(player, item))
+                {
+                    player.SetObjectAsNoLongerHeld(true, true, shipLocalPos, item, floorYRot);
+                }
             }
             catch
             {

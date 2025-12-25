@@ -10,6 +10,7 @@ If you are a **client (guest)**, installing **[TooManyItems](https://thunderstor
 - **Tip**: If a command shows **`[itemName]`**, the name is optional — if you omit it, the command will use the **item you are currently holding** (if any).
 - **`/sort`**: Full sort (sort everything in the ship).
   - Uses `skippedItems` as the skip list for full sort.
+  - If you are holding an item, `/sort` will drop it first.
 - **`/sort -a`**: Full sort, but **IGNORE `skippedItems`** (sort absolutely everything that is eligible).
 - **`/sort -b`**: Full sort with “saved position priority”.
   - If an item type has a saved `/sort set` position, it will **NOT** be skipped even if it matches `skippedItems`.
