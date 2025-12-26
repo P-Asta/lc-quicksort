@@ -63,7 +63,7 @@ namespace QuickSort
                 ("walkie_talkie", new[] { "무전기", "walkie-talkie" }),
                 ("zap_gun", new[] { "잽건", "zap gun" }),
                 ("radar_booster", new[] { "레이더 부스터", "radar booster", "radar-booster" }),
-                ("spray_paint", new[] { "페인트 스프레이", "spray paint" }),
+                ("spray_paint", new[] { "페인트 스프레이", "스프레이 페인트", "spray paint" }),
                 ("shotgun", new[] { "산탄총" }),
                 ("ammo", new[] { "탄약" }),
                 ("clipboard", new[] { "클립보드" }),
@@ -95,6 +95,9 @@ namespace QuickSort
                 ("broken_p88", new[] { "망가진 p88", "broken p88" }),
                 ("employee", new[] { "직원" }),
                 ("mine", new[] { "지뢰" }),
+                ("toothles", new[] { "투슬리스", "toothles" }),
+                ("crossbow", new[] { "석궁", "crossbow" }),
+                ("physgun", new[] { "피직스건", "physgun" }),
                 ("ammo_crate", new[] { "탄약 상자", "ammo crate" }),
                 ("drink", new[] { "음료수" }),
                 ("radio", new[] { "라디오" }),
@@ -176,16 +179,21 @@ namespace QuickSort
             Add("플라스크", "Flask");
             Add("비극", "Tragedy");
             Add("희극", "Comedy");
-            Add("방퀴 쿠션", "Whoopie cushion");
+            Add("방귀 쿠션", "Whoopie cushion");
+            Add("방퀴 쿠션", "Whoopie cushion"); // legacy typo fallback
             Add("식칼", "Kitchen knife");
             Add("부활절 달걀", "Easter egg");
+            Add("제초제", "Weed killer");
+            Add("벨트 배낭", "Belt bag");
             Add("축구공", "Soccer ball");
             Add("조작 패드", "Control pad");
             Add("쓰레기통 뚜껑", "Garbage lid");
             Add("플라스틱 컵", "Plastic cup");
             Add("화장실 휴지", "Toilet paper");
             Add("장난감 기차", "Toy train");
+            Add("제드 도그", "Zed Dog");
             Add("시계", "Clock");
+            Add("시체", "Body");
             Add("알", "Egg");
 
             // Additional vanilla objects/props translated directly (not via ItemScanNode in the snippet)
