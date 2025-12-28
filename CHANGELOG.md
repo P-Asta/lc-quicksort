@@ -1,5 +1,9 @@
 ## Changelog
 
+### 0.1.9
+- **Fix**:
+  - add some kr names
+
 ### 0.1.8
 - **Fix**:
   - `/sort`: now drops your held item first, then runs full sort.
