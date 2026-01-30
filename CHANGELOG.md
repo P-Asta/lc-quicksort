@@ -1,5 +1,10 @@
 ## Changelog
 
+### 0.1.10
+- **Fix**:
+  - add some kr names
+  - wight 0lb bug
+
 ### 0.1.9
 - **Fix**:
   - add some kr names

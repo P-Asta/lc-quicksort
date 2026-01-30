@@ -70,8 +70,15 @@ namespace QuickSort
         private List<GrabbableObject> scrap;
         public static bool inProgress;
 
+        // Weight snapshot + interaction lock during sorting/moving.
+        private static bool _interactionLocked;
+        private static int _interactionBypassCount;
+        private static List<(string name, bool isProperty, float value)>? _savedWeight;
+
         private Vector3 SortOrigin => new Vector3(sortOriginX.Value, sortOriginY.Value, sortOriginZ.Value);
-        private bool CanSort => Ship.InOrbit || Ship.Stationary;
+        // User request: allow sort commands even during takeoff/landing.
+        // We rely on "inside ship" + ship existence checks instead of ship state flags.
+        private bool CanSort => true;
 
         internal static bool EnsureLocalPlayerInShip(out string? error)
         {
@@ -199,12 +206,172 @@ namespace QuickSort
             // Command is registered in Plugin.Awake
         }
 
+        internal static bool IsInteractionLocked => _interactionLocked;
+        internal static bool IsInteractionBypassActive => _interactionBypassCount > 0;
+
+        internal static IDisposable BeginInteractionBypass()
+        {
+            _interactionBypassCount++;
+            return new DisposeAction(() =>
+            {
+                _interactionBypassCount = Math.Max(0, _interactionBypassCount - 1);
+            });
+        }
+
+        private sealed class DisposeAction : IDisposable
+        {
+            private readonly Action _onDispose;
+            private bool _disposed;
+            public DisposeAction(Action onDispose) => _onDispose = onDispose;
+            public void Dispose()
+            {
+                if (_disposed) return;
+                _disposed = true;
+                _onDispose?.Invoke();
+            }
+        }
+
+        private static void CapturePlayerWeightIfNeeded()
+        {
+            if (_savedWeight != null) return;
+            var player = Player.Local;
+            if (player == null) return;
+
+            var t = player.GetType();
+            const BindingFlags FLAGS = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            var saved = new List<(string name, bool isProperty, float value)>();
+
+            bool IsCarryWeightName(string n) =>
+                n != null &&
+                n.IndexOf("carry", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                n.IndexOf("weight", StringComparison.OrdinalIgnoreCase) >= 0;
+
+            try
+            {
+                foreach (var f in t.GetFields(FLAGS))
+                {
+                    if (f.FieldType != typeof(float)) continue;
+                    if (!IsCarryWeightName(f.Name)) continue;
+                    saved.Add((f.Name, isProperty: false, (float)f.GetValue(player)));
+                }
+            }
+            catch { }
+
+            try
+            {
+                foreach (var p in t.GetProperties(FLAGS))
+                {
+                    if (p.PropertyType != typeof(float)) continue;
+                    if (p.GetIndexParameters().Length != 0) continue;
+                    if (!p.CanRead || !p.CanWrite) continue;
+                    if (!IsCarryWeightName(p.Name)) continue;
+                    saved.Add((p.Name, isProperty: true, (float)p.GetValue(player, null)));
+                }
+            }
+            catch { }
+
+            if (saved.Count > 0)
+                _savedWeight = saved;
+        }
+
+        private static void RestorePlayerWeightIfNeeded()
+        {
+            if (_savedWeight == null) return;
+            var player = Player.Local;
+            if (player == null)
+            {
+                _savedWeight = null;
+                return;
+            }
+
+            var t = player.GetType();
+            const BindingFlags FLAGS = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            foreach (var s in _savedWeight)
+            {
+                try
+                {
+                    if (!s.isProperty)
+                    {
+                        var f = t.GetField(s.name, FLAGS);
+                        if (f != null && f.FieldType == typeof(float))
+                            f.SetValue(player, s.value);
+                    }
+                    else
+                    {
+                        var p = t.GetProperty(s.name, FLAGS);
+                        if (p != null && p.PropertyType == typeof(float) && p.GetIndexParameters().Length == 0 && p.CanWrite)
+                            p.SetValue(player, s.value, null);
+                    }
+                }
+                catch { }
+            }
+            _savedWeight = null;
+        }
+
+        private static void BeginOperationLock()
+        {
+            if (_interactionLocked) return;
+            CapturePlayerWeightIfNeeded();
+            _interactionLocked = true;
+        }
+
+        private static void EndOperationLock()
+        {
+            _interactionLocked = false;
+            _interactionBypassCount = 0;
+            RestorePlayerWeightIfNeeded();
+        }
+
+        private IEnumerator DropHeldItemIfAny(GameObject ship)
+        {
+            var player = Player.Local;
+            if (player == null) yield break;
+            var held = player.currentlyHeldObjectServer as GrabbableObject;
+            if (held == null) yield break;
+
+            var shipNetObj = ship != null ? ship.GetComponent<NetworkObject>() : null;
+            // Drop near the player, but snapped to ship floor to avoid "floating in air" drops.
+            Vector3 dropLocal = ship.transform.InverseTransformPoint(player.transform.position + player.transform.forward * 0.75f);
+            if (TryGetGroundYLocalAt(shipLocalXZ: dropLocal, out float groundYLocal, out _))
+            {
+                float vOff = 0f;
+                try
+                {
+                    if (held.itemProperties != null)
+                        vOff = held.itemProperties.verticalOffset - 0.05f;
+                }
+                catch { }
+                dropLocal.y = groundYLocal + vOff;
+            }
+
+            using (BeginInteractionBypass())
+            {
+                held.floorYRot = -1;
+                player.DiscardHeldObject(true, shipNetObj, dropLocal, false);
+            }
+
+            // Wait briefly for the held slot to clear before continuing.
+            const int maxFrames = 30;
+            int frames = 0;
+            while (frames < maxFrames && player.currentlyHeldObjectServer != null)
+            {
+                frames++;
+                yield return null;
+            }
+        }
+
         private void Update()
         {
             if (inProgress && ((ButtonControl)Keyboard.current.escapeKey).wasPressedThisFrame)
             {
                 inProgress = false;
                 Log.Chat("Sorting cancelled", "FF0000");
+            }
+
+            // If sorting ended (complete or cancelled), restore weight + re-enable interactions.
+            if (_interactionLocked && !inProgress)
+            {
+                EndOperationLock();
             }
         }
 
@@ -213,12 +380,6 @@ namespace QuickSort
             if (args.Length > 0 && args[0] == "help")
             {
                 Log.Chat("Usage: /sort [help]", "FFFF00");
-                return;
-            }
-
-            if (!CanSort)
-            {
-                Log.NotifyPlayer("Sorter Error", "Must be in orbit or stationary at company", isWarning: true);
                 return;
             }
 
@@ -256,38 +417,8 @@ namespace QuickSort
                 yield break;
             }
 
-            // User preference: for FULL sort (/sort), if you're holding an item, drop it first.
-            // This avoids holding state interfering with mass moves and matches "drop then sort" expectations.
-            var dropWaitPlayer = Player.Local;
-            bool shouldWaitForDrop = false;
-            try
-            {
-                var held = dropWaitPlayer != null ? dropWaitPlayer.currentlyHeldObjectServer as GrabbableObject : null;
-                if (dropWaitPlayer != null && held != null)
-                {
-                    var shipNetObj = ship.GetComponent<NetworkObject>();
-                    Vector3 heldShipLocal = ship.transform.InverseTransformPoint(held.transform.position);
-                    held.floorYRot = -1;
-                    dropWaitPlayer.DiscardHeldObject(true, shipNetObj, heldShipLocal, false);
-                    shouldWaitForDrop = true;
-                }
-            }
-            catch (Exception e)
-            {
-                Log.Warning($"Failed to drop held item before /sort: {e.Message}");
-            }
-
-            // Wait briefly for the held slot to clear before continuing.
-            if (shouldWaitForDrop && dropWaitPlayer != null)
-            {
-                const int maxFrames = 30;
-                int frames = 0;
-                while (frames < maxFrames && dropWaitPlayer.currentlyHeldObjectServer != null)
-                {
-                    frames++;
-                    yield return null;
-                }
-            }
+            // User request: /sort should not force-drop held item.
+            BeginOperationLock();
 
             Vector3 originLocal = SortOrigin; // ship-local origin
 
@@ -522,12 +653,6 @@ namespace QuickSort
         {
             error = null;
 
-            if (!CanSort)
-            {
-                error = "Must be in orbit or stationary at company";
-                return false;
-            }
-
             if (inProgress)
             {
                 error = "Operation in progress";
@@ -594,12 +719,6 @@ namespace QuickSort
         {
             error = null;
 
-            if (!CanSort)
-            {
-                error = "Must be in orbit or stationary at company";
-                return false;
-            }
-
             if (inProgress)
             {
                 error = "Operation in progress";
@@ -611,6 +730,7 @@ namespace QuickSort
             string query = !string.IsNullOrWhiteSpace(queryOrNull)
                 ? queryOrNull!
                 : (held != null ? held.Name() : "");
+            bool useHeldType = string.IsNullOrWhiteSpace(queryOrNull);
 
             if (string.IsNullOrWhiteSpace(query))
             {
@@ -670,7 +790,7 @@ namespace QuickSort
             }
 
             Vector3 targetWithOffset = new Vector3(targetLocal.x, targetLocal.y - groundYLocal, targetLocal.z);
-            StartCoroutine(MoveItemsOfTypeToPosition(resolved, targetWithOffset, force, announce: true, ignoreSkipLists: true));
+            StartCoroutine(MoveItemsOfTypeToPosition(resolved, targetWithOffset, force, announce: true, ignoreSkipLists: true, dropHeldFirst: useHeldType));
             return true;
         }
 
@@ -678,12 +798,6 @@ namespace QuickSort
         {
             resolvedItemKey = "";
             error = null;
-
-            if (!CanSort)
-            {
-                error = "Must be in orbit or stationary at company";
-                return false;
-            }
 
             if (inProgress)
             {
@@ -753,6 +867,7 @@ namespace QuickSort
                 }
                 resolvedItemKey = held.Name();
             }
+            bool useHeldType = string.IsNullOrWhiteSpace(queryOrNull);
 
             if (string.IsNullOrWhiteSpace(resolvedItemKey))
             {
@@ -776,7 +891,7 @@ namespace QuickSort
 
             Log.ConfirmSound();
             // Also move to the exact saved position (ground-relative offset)
-            StartCoroutine(MoveItemsOfTypeToPosition(resolvedItemKey, savedPos, force, announce: true, ignoreSkipLists: true));
+            StartCoroutine(MoveItemsOfTypeToPosition(resolvedItemKey, savedPos, force, announce: true, ignoreSkipLists: true, dropHeldFirst: useHeldType));
             return true;
         }
 
@@ -887,7 +1002,8 @@ namespace QuickSort
             bool force,
             bool announce,
             bool ignoreSkipLists = false,
-            bool applyTwoHandedSortYOffset = false
+            bool applyTwoHandedSortYOffset = false,
+            bool dropHeldFirst = false
         )
         {
             inProgress = true;
@@ -910,6 +1026,28 @@ namespace QuickSort
                 inProgress = false;
                 yield break;
             }
+
+            // Only drop when the command relies on the held item (e.g. /pile with no name).
+            if (dropHeldFirst)
+            {
+                var heldBeforeDrop = Player.Local.currentlyHeldObjectServer as GrabbableObject;
+                yield return DropHeldItemIfAny(ship);
+
+                // IMPORTANT: our cached `scrap` list is usually built BEFORE dropping (in the command handler),
+                // so the just-dropped item may not be present and then won't be moved.
+                // Refresh the scan so the dropped item becomes eligible.
+                CategorizeItems(includeSkippedItems: true);
+
+                // Extra safety: if the dropped item is still not captured by CategorizeItems (timing/flags),
+                // include it explicitly if it matches the target type and is in the ship.
+                if (heldBeforeDrop != null && heldBeforeDrop.Name() == itemKey && heldBeforeDrop.isInShipRoom)
+                {
+                    if (scrap == null) scrap = new List<GrabbableObject>();
+                    if (!scrap.Contains(heldBeforeDrop))
+                        scrap.Add(heldBeforeDrop);
+                }
+            }
+            BeginOperationLock();
 
             // Group items by name (same as full sort) so filtering uses stable keys.
             Dictionary<string, List<GrabbableObject>> groupedItems = new Dictionary<string, List<GrabbableObject>>();
@@ -1112,7 +1250,9 @@ namespace QuickSort
 
         private bool ShouldBreak(GrabbableObject item)
         {
-            return !inProgress || !Ship.Stationary ||
+            // User request: allow sorting even while ship is taking off / landing.
+            // Only stop if the user cancels or the player is being beamed.
+            return !inProgress ||
                    (Player.Local != null && (Player.Local.beamOutParticle.isPlaying || Player.Local.beamUpParticle.isPlaying));
         }
 
@@ -1381,27 +1521,6 @@ namespace QuickSort
                 return true;
             }
 
-            if (!Ship.Stationary)
-            {
-                error = "Must be in orbit or stationary at company";
-                QuickSort.Log.Warning($"SortCommand failed: {error}");
-                return false;
-            }
-
-            if (!Sorter.EnsureLocalPlayerInShip(out var shipErr))
-            {
-                error = shipErr ?? "You must be inside the ship to use this command.";
-                QuickSort.Log.Warning($"SortCommand failed: {error}");
-                return false;
-            }
-
-            if (Sorter.inProgress)
-            {
-                error = "Operation in progress";
-                QuickSort.Log.Warning($"SortCommand failed: {error}");
-                return false;
-            }
-
             // Works on non-host too (vanilla ServerRpc calls from local player).
             // Note: force flags were removed.
             if (args.Contains("-r") || args.Contains("-redo"))
@@ -1436,6 +1555,35 @@ namespace QuickSort
             string[] filteredArgs = args
                 .Where(a => a != "-a" && a != "-all" && a != "-b" && a != "-bound" && a != "-ab" && a != "-ba")
                 .ToArray();
+
+            // Some subcommands are "config/info only" and should work even when not in orbit/landed,
+            // and even if the player isn't currently inside the ship.
+            // Movement/sort operations still require CanSortNow + inside-ship.
+            string sub0 = (filteredArgs != null && filteredArgs.Length > 0) ? filteredArgs[0] : "";
+            bool isNonMovementCommand =
+                sub0 == "skip" ||
+                sub0 == "bindings" || sub0 == "binds" || sub0 == "shortcuts" || sub0 == "aliases" ||
+                sub0 == "positions" ||
+                sub0 == "bind" ||
+                sub0 == "reset";
+
+            if (!isNonMovementCommand)
+            {
+                // User request: allow usage during takeoff/landing. Do NOT gate on ship state flags.
+                if (!Sorter.EnsureLocalPlayerInShip(out var shipErr))
+                {
+                    error = shipErr ?? "You must be inside the ship to use this command.";
+                    QuickSort.Log.Warning($"SortCommand failed: {error}");
+                    return false;
+                }
+
+                if (Sorter.inProgress)
+                {
+                    error = "Operation in progress";
+                    QuickSort.Log.Warning($"SortCommand failed: {error}");
+                    return false;
+                }
+            }
 
             // Get Sorter instance from Plugin (Unity-safe null checks: destroyed objects compare == null,
             // but C# null-conditional (?.) does NOT use Unity's overloaded null semantics)
@@ -1949,12 +2097,6 @@ namespace QuickSort
             {
                 ChatCommandAPI.ChatCommandAPI.Print(Description);
                 return true;
-            }
-
-            if (!Ship.Stationary)
-            {
-                error = "Must be in orbit or stationary at company";
-                return false;
             }
 
             if (!Sorter.EnsureLocalPlayerInShip(out var shipErr))

@@ -172,7 +172,9 @@ namespace QuickSort
             Add("양보 표지판", "Yield sign");
             Add("산탄총", "Shotgun");
             Add("더블 배럴", "Double-barrel");
-            Add("산탄총 탄약", "Shotgun shell");
+            Add("산탄총 탄약", "ammo");
+            Add("탄약", "ammo");
+            // Add("산탄총 탄약", "Shotgun shell");
             Add("사제 섬광탄", "Homemade Flashbang");
             Add("선물", "Gift");
             Add("선물 상자", "Gift box");

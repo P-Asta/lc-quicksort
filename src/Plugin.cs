@@ -107,6 +107,7 @@ namespace QuickSort
             harmony.PatchAll(typeof(QuickSort.Ship));
             harmony.PatchAll(typeof(Startup));
             harmony.PatchAll(typeof(GrabPatch));
+            harmony.PatchAll(typeof(InteractionLockPatch));
 
             // Register command immediately (ChatCommandAPI should be loaded by now)
             try
