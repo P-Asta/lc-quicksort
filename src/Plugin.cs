@@ -21,9 +21,11 @@ namespace QuickSort
         public static Plugin Instance { get; private set; }
         private static Harmony harmony;
         public static GameObject sorterObject;
+        private static bool applicationIsQuitting;
 
         private void Awake()
         {
+            applicationIsQuitting = false;
             Instance = this;
             Log = Logger;
             config = Config;
@@ -151,6 +153,18 @@ namespace QuickSort
 
         private void OnDestroy()
         {
+            if (ReferenceEquals(Instance, this))
+                Instance = null!;
+
+            // Some BepInEx/community-pack setups hide or otherwise meddle with the manager object.
+            // If this component is destroyed unexpectedly during runtime, do not tear down Harmony and
+            // self-disable the entire mod. Restrict cleanup to actual application shutdown.
+            if (!applicationIsQuitting)
+            {
+                QuickSort.Log.Warning("Plugin OnDestroy fired before application quit; skipping cleanup to avoid self-unpatching.");
+                return;
+            }
+
             if (harmony != null)
             {
                 harmony.UnpatchSelf();
@@ -160,6 +174,11 @@ namespace QuickSort
             {
                 Destroy(sorterObject);
             }
+        }
+
+        private void OnApplicationQuit()
+        {
+            applicationIsQuitting = true;
         }
 
         private static bool IsVersionLessThan(string a, string b)

@@ -1,5 +1,9 @@
 ## Changelog
 
+## 0.1.13
+- **Fix**
+  - chanload destory bug
+
 ## 0.1.11 / 0.1.12
 - **Fix**
   - v80 :D
