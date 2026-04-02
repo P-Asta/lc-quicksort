@@ -1,5 +1,9 @@
 ## Changelog
 
+## 0.1.11 / 0.1.12
+- **Fix**
+  - v80 :D
+
 ### 0.1.10
 - **Fix**:
   - add some kr names
