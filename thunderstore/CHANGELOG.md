@@ -1,5 +1,10 @@
 ## Changelog
 
+## 0.1.14
+- **Change**
+  - Modified to sort all items on the map in certain situations.
+
+
 ## 0.1.13
 - **Fix**
   - chanload destory bug

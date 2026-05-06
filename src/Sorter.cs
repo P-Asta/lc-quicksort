@@ -1225,8 +1225,9 @@ namespace QuickSort
             {
                 // Include ALL grabbable items that are inside the ship room (not only scrap).
                 // Store-bought items like shovel/weedkiller are not scrap and were previously excluded.
+                // When the ship is in orbit or at Company/Gordion, include every detected item.
                 bool skip = includeSkippedItems ? ShouldSkipExplicitQuery(item) : ShouldSkip(item);
-                if (!skip && item.isInShipRoom)
+                if (!skip && ShouldIncludeItemByLocation(item))
                 {
                     scrap.Add(item);
                 }
@@ -1236,6 +1237,11 @@ namespace QuickSort
             scrap = scrap.OrderBy(item => item.scrapValue)
                         .ThenBy(item => item.Name())
                         .ToList();
+        }
+
+        private static bool ShouldIncludeItemByLocation(GrabbableObject item)
+        {
+            return item != null && (Ship.ShouldSortAllDetectedItems || item.isInShipRoom);
         }
 
         private IEnumerator GrabbableRetry(GrabbableObject item)
@@ -1269,7 +1275,7 @@ namespace QuickSort
             if (item.Name() == "body")
                 return true;
 
-            if (!item.isInShipRoom)
+            if (!ShouldIncludeItemByLocation(item))
                 return true;
 
             return false;
@@ -1416,7 +1422,7 @@ namespace QuickSort
                 return true;
             }
 
-            if (!item.isInShipRoom)
+            if (!ShouldIncludeItemByLocation(item))
             {
                 return true;
             }
@@ -1455,7 +1461,7 @@ namespace QuickSort
             if (item.Name() == "body")
                 return true;
 
-            if (!item.isInShipRoom)
+            if (!ShouldIncludeItemByLocation(item))
                 return true;
 
             if (ignoreSkipTokens)

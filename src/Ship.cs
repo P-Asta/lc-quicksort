@@ -188,6 +188,92 @@ namespace QuickSort
             GetStartOfRoundBool("inShipPhase", "InShipPhase", "shipPhase", "ShipPhase") == true &&
             GetStartOfRoundBool("shipHasLanded", "ShipHasLanded", "hasLanded", "HasLanded") != true;
 
+        private static object? GetCurrentLevel()
+        {
+            var sor = StartOfRound.Instance;
+            if (sor == null) return null;
+            var t = sor.GetType();
+
+            try
+            {
+                const BindingFlags FLAGS = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+                var f = t.GetField("currentLevel", FLAGS) ?? t.GetField("CurrentLevel", FLAGS);
+                if (f != null) return f.GetValue(sor);
+
+                var p = t.GetProperty("currentLevel", FLAGS) ?? t.GetProperty("CurrentLevel", FLAGS);
+                if (p != null && p.GetIndexParameters().Length == 0) return p.GetValue(sor, null);
+            }
+            catch { }
+
+            return null;
+        }
+
+        private static bool CurrentLevelTextContains(params string[] needles)
+        {
+            var level = GetCurrentLevel();
+            if (level == null) return false;
+
+            try
+            {
+                var t = level.GetType();
+                const BindingFlags FLAGS = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+
+                foreach (var f in t.GetFields(FLAGS))
+                {
+                    string? value = null;
+                    if (f.FieldType == typeof(string))
+                    {
+                        value = f.GetValue(level) as string;
+                    }
+                    else if (f.FieldType == typeof(int) && string.Equals(f.Name, "levelID", StringComparison.OrdinalIgnoreCase))
+                    {
+                        value = f.GetValue(level)?.ToString();
+                    }
+
+                    if (ContainsAny(value, needles))
+                        return true;
+                }
+
+                foreach (var p in t.GetProperties(FLAGS))
+                {
+                    if (p.GetIndexParameters().Length != 0) continue;
+
+                    string? value = null;
+                    if (p.PropertyType == typeof(string))
+                    {
+                        value = p.GetValue(level, null) as string;
+                    }
+                    else if (p.PropertyType == typeof(int) && string.Equals(p.Name, "levelID", StringComparison.OrdinalIgnoreCase))
+                    {
+                        value = p.GetValue(level, null)?.ToString();
+                    }
+
+                    if (ContainsAny(value, needles))
+                        return true;
+                }
+            }
+            catch { }
+
+            return false;
+        }
+
+        private static bool ContainsAny(string? value, string[] needles)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return false;
+            foreach (var needle in needles)
+            {
+                if (string.IsNullOrWhiteSpace(needle)) continue;
+                if (value.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0)
+                    return true;
+            }
+            return false;
+        }
+
+        public static bool IsCompanyLevel =>
+            CurrentLevelTextContains("Gordion", "Company", "CompanyBuilding");
+
+        public static bool ShouldSortAllDetectedItems => InOrbit || IsCompanyLevel;
+
         [HarmonyPatch(typeof(StartOfRound), "ShipLeave")]
         [HarmonyPostfix]
         [HarmonyWrapSafe]
