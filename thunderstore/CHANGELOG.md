@@ -1,6 +1,6 @@
 ## Changelog
 
-## 0.1.14
+## 0.1.15
 - **Change**
   - Modified to sort all items on the map in certain situations.
 
