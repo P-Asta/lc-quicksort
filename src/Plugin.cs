@@ -10,10 +10,10 @@ namespace QuickSort
 {
     // Per ChatCommandAPI README: make this a hard dependency so load order is guaranteed.
     [BepInDependency("baer1.ChatCommandAPI", BepInDependency.DependencyFlags.HardDependency)]
-    [BepInPlugin("pasta.quicksort", "QuickSort", "0.1.8")]
+    [BepInPlugin("pasta.quicksort", "QuickSort", "0.1.16")]
     public class Plugin : BaseUnityPlugin
     {
-        private const string CurrentConfigSchemaVersion = "0.1.8";
+        private const string CurrentConfigSchemaVersion = "0.1.9";
 
         public static ManualLogSource Log = null!;
         public static ConfigFile config;
@@ -61,15 +61,6 @@ namespace QuickSort
                     needsSave = true;
                 }
 
-                // Requested migration: add "shotgun" and "ammo" to skippedItems (if missing).
-                var skippedItems = config.Bind<string>("Sorter", "skippedItems", Sorter.DefaultSkippedItems,
-                    "Global skip list (comma-separated, substring match). Applies to all grabbable items.");
-                string migratedSkip = AddTokensToCommaList(skippedItems.Value, "shotgun", "ammo");
-                if (!string.Equals(migratedSkip, skippedItems.Value, System.StringComparison.Ordinal))
-                {
-                    skippedItems.Value = migratedSkip;
-                    needsSave = true;
-                }
             }
 
             // 0.1.7 migration:
@@ -84,6 +75,21 @@ namespace QuickSort
                         existingSkipped.Value = Sorter.DefaultSkippedItems;
                         needsSave = true;
                     }
+                }
+            }
+
+            // 0.1.9 migration:
+            // Shotgun and ammo should not be forced into skippedItems. Older migrations/defaults added them,
+            // which made them reappear after users removed them.
+            if (shouldRunMigrations && (!hadConfigVersionKey || IsVersionLessThan(currentVer, "0.1.9")))
+            {
+                var skippedItems = config.Bind<string>("Sorter", "skippedItems", Sorter.DefaultSkippedItems,
+                    "Global skip list (comma-separated, substring match). Applies to all grabbable items.");
+                string migratedSkip = RemoveTokensFromCommaList(skippedItems.Value, "shotgun", "ammo", "double_barrel", "shotgun_shell");
+                if (!string.Equals(migratedSkip, skippedItems.Value, System.StringComparison.Ordinal))
+                {
+                    skippedItems.Value = migratedSkip;
+                    needsSave = true;
                 }
             }
 
@@ -114,14 +120,7 @@ namespace QuickSort
             // Register command immediately (ChatCommandAPI should be loaded by now)
             try
             {
-                new QuickSort.SortCommand();
-                new QuickSort.SortBindCommand();
-                new QuickSort.SortSetCommand();
-                new QuickSort.SortResetCommand();
-                new QuickSort.SortPositionsCommand();
-                new QuickSort.SortBindingsListCommand();
-                new QuickSort.SortSkipCommand();
-                new QuickSort.PileCommand();
+                Startup.RegisterCommandsOnce();
                 QuickSort.Log.Info("Sort command registered in Awake");
             }
             catch (System.Exception e)
@@ -209,31 +208,39 @@ namespace QuickSort
             return false;
         }
 
-        private static string AddTokensToCommaList(string? list, params string[] tokensToAdd)
+        private static string RemoveTokensFromCommaList(string? list, params string[] tokensToRemove)
         {
             // Normalize tokens to item-key style (underscores) and de-dupe.
             var tokens = new System.Collections.Generic.List<string>();
             var seen = new System.Collections.Generic.HashSet<string>();
+            var remove = new System.Collections.Generic.HashSet<string>();
 
-            void Add(string raw)
+            string Normalize(string raw)
             {
                 string t = (raw ?? "").Trim();
-                if (string.IsNullOrWhiteSpace(t)) return;
+                if (string.IsNullOrWhiteSpace(t)) return "";
                 t = QuickSort.Extensions.NormalizeName(t).Trim('_');
-                if (string.IsNullOrWhiteSpace(t)) return;
-                if (seen.Add(t)) tokens.Add(t);
+                return string.IsNullOrWhiteSpace(t) ? "" : t;
+            }
+
+            if (tokensToRemove != null)
+            {
+                foreach (var raw in tokensToRemove)
+                {
+                    string t = Normalize(raw);
+                    if (!string.IsNullOrWhiteSpace(t))
+                        remove.Add(t);
+                }
             }
 
             if (!string.IsNullOrWhiteSpace(list))
             {
                 foreach (var part in list.Split(','))
-                    Add(part);
-            }
-
-            if (tokensToAdd != null)
-            {
-                foreach (var raw in tokensToAdd)
-                    Add(raw);
+                {
+                    string t = Normalize(part);
+                    if (string.IsNullOrWhiteSpace(t) || remove.Contains(t)) continue;
+                    if (seen.Add(t)) tokens.Add(t);
+                }
             }
 
             return string.Join(", ", tokens);
@@ -266,6 +273,22 @@ namespace QuickSort
     {
         private static bool commandRegistered = false;
 
+        public static void RegisterCommandsOnce()
+        {
+            if (commandRegistered)
+                return;
+
+            new QuickSort.SortCommand();
+            new QuickSort.SortBindCommand();
+            new QuickSort.SortSetCommand();
+            new QuickSort.SortResetCommand();
+            new QuickSort.SortPositionsCommand();
+            new QuickSort.SortBindingsListCommand();
+            new QuickSort.SortSkipCommand();
+            new QuickSort.PileCommand();
+            commandRegistered = true;
+        }
+
         [HarmonyPatch(typeof(PlayerControllerB), "ConnectClientToPlayerObject")]
         [HarmonyPostfix]
         private static void OnLocalPlayerCreated(PlayerControllerB __instance)
@@ -278,15 +301,7 @@ namespace QuickSort
             {
                 try
                 {
-                    new QuickSort.SortCommand();
-                    new QuickSort.SortBindCommand();
-                    new QuickSort.SortSetCommand();
-                    new QuickSort.SortResetCommand();
-                    new QuickSort.SortPositionsCommand();
-                    new QuickSort.SortBindingsListCommand();
-                    new QuickSort.SortSkipCommand();
-                    new QuickSort.PileCommand();
-                    commandRegistered = true;
+                    RegisterCommandsOnce();
                     QuickSort.Log.Info("Sort command registered");
                 }
                 catch (System.Exception e)

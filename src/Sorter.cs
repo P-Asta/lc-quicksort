@@ -7,9 +7,10 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.Controls;
 using Unity.Netcode;
-using ChatCommandAPI;
 using System;
 using System.Reflection;
+using ChatCommandAPI.Utils;
+using CommandChat = ChatCommandAPI.Utils.Chat;
 
 namespace QuickSort
 {
@@ -17,7 +18,7 @@ namespace QuickSort
     {
         // Keep this in one place so config defaults and migrations stay consistent.
         public const string DefaultSkippedItems =
-            "body, clipboard, sticky_note, boombox, shovel, jetpack, flashlight, pro_flashlight, key, stun_grenade, lockpicker, mapper, extension_ladder, tzp_inhalant, walkie_talkie, zap_gun, kitchen_knife, weed_killer, radar_booster, spray_paint, belt_bag, shotgun, ammo";
+            "body, clipboard, sticky_note, boombox, shovel, jetpack, flashlight, pro_flashlight, key, stun_grenade, lockpicker, mapper, extension_ladder, tzp_inhalant, walkie_talkie, zap_gun, kitchen_knife, weed_killer, radar_booster, spray_paint, belt_bag";
 
         // Some specific bulky props behave better when placed slightly lower than the default computed floor+offset.
         // NOTE: keys are normalized (underscores) to match item.Name().
@@ -1487,17 +1488,34 @@ namespace QuickSort
         }
     }
 
-    public class SortCommand : Command
+    public abstract class QuickSortCommand : ChatCommandAPI.Command
     {
-        public SortCommand()
+        public virtual string[] Commands => new[] { Name.ToLowerInvariant() };
+        public sealed override string Command => Commands[0];
+        public sealed override string[] Aliases => Commands.Skip(1).ToArray();
+
+        public sealed override void Invoke(string args)
         {
-            // Command is automatically registered when instantiated
-            QuickSort.Log.Info("SortCommand constructor called");
+            string[] parsedArgs;
+            try
+            {
+                parsedArgs = Args.Parse(args).ToArray();
+            }
+            catch (ChatCommandAPI.InvalidArgumentsException)
+            {
+                throw new ChatCommandAPI.CommandException("Invalid arguments.");
+            }
+
+            if (!InvokeParsed(parsedArgs, out var error))
+                throw new ChatCommandAPI.CommandException(error ?? "Command failed.");
         }
 
-        public override string Name => "sort";
-        public override string[] Commands => new[] { "sort", Name };
-        public override string Description =>
+        protected abstract bool InvokeParsed(string[] args, out string? error);
+    }
+
+    public class SortCommand : QuickSortCommand
+    {
+        private const string SortDescription =
             "Sorts items on the ship.\n" +
             "Usage:\n" +
             "  /sort                 -> sort everything\n" +
@@ -1515,7 +1533,22 @@ namespace QuickSort
             "  /sort bindings        -> list all binds (numbers + names)\n" +
             "  /sort positions       -> list saved sort positions";
 
-        public override bool Invoke(string[] args, Dictionary<string, string> kwargs, out string? error)
+        public SortCommand()
+        {
+            // Command is automatically registered when instantiated
+            QuickSort.Log.Info("SortCommand constructor called");
+        }
+
+        public override string Name => "sort";
+        public override string[] Commands => new[] { "sort", Name };
+        public override string Description => SortDescription;
+
+        protected override bool InvokeParsed(string[] args, out string? error)
+        {
+            return InvokeSort(args, out error);
+        }
+
+        public static bool InvokeSort(string[] args, out string? error)
         {
             error = null;
 
@@ -1523,7 +1556,7 @@ namespace QuickSort
 
             if (args.Length > 0 && args[0] == "help")
             {
-                ChatCommandAPI.ChatCommandAPI.Print(Description);
+                CommandChat.Print(SortDescription);
                 return true;
             }
 
@@ -1546,11 +1579,9 @@ namespace QuickSort
             // -a / -all: full sort but ignore skippedItems (sort everything)
             // -b / -bound: full sort but include item types with saved /sort set positions even if skipped
             bool ignoreSkippedItems =
-                args.Contains("-a") || args.Contains("-all") ||
-                (kwargs != null && (kwargs.ContainsKey("a") || kwargs.ContainsKey("all")));
+                args.Contains("-a") || args.Contains("-all");
             bool includeSavedPositionTypesEvenIfSkipped =
-                args.Contains("-b") || args.Contains("-bound") ||
-                (kwargs != null && (kwargs.ContainsKey("b") || kwargs.ContainsKey("bound")));
+                args.Contains("-b") || args.Contains("-bound");
 
             if (ignoreSkippedItems && includeSavedPositionTypesEvenIfSkipped)
             {
@@ -1656,13 +1687,13 @@ namespace QuickSort
                         var tokens = sorter.GetSkippedTokens();
                         if (tokens.Count == 0)
                         {
-                            ChatCommandAPI.ChatCommandAPI.Print("skippedItems is empty.");
+                            CommandChat.Print("skippedItems is empty.");
                             return true;
                         }
 
                         string text = string.Join(", ", tokens.Take(20));
                         if (tokens.Count > 20) text += ", ...";
-                        ChatCommandAPI.ChatCommandAPI.Print($"skippedItems ({tokens.Count}): {text}");
+                        CommandChat.Print($"skippedItems ({tokens.Count}): {text}");
                         return true;
                     }
 
@@ -1701,7 +1732,7 @@ namespace QuickSort
                         if (!sorter.TrySkipAdd(name, out error, out var msg))
                             return false;
                         if (!string.IsNullOrWhiteSpace(msg))
-                            ChatCommandAPI.ChatCommandAPI.Print(msg);
+                            CommandChat.Print(msg);
                         return true;
                     }
 
@@ -1721,7 +1752,7 @@ namespace QuickSort
                         if (!sorter.TrySkipRemove(name, out error, out var msg))
                             return false;
                         if (!string.IsNullOrWhiteSpace(msg))
-                            ChatCommandAPI.ChatCommandAPI.Print(msg);
+                            CommandChat.Print(msg);
                         return true;
                     }
 
@@ -1756,7 +1787,7 @@ namespace QuickSort
                                 error = rmErr ?? "Failed to remove shortcut.";
                                 return false;
                             }
-                            ChatCommandAPI.ChatCommandAPI.Print(removed ? $"Unbound {removeId}" : $"No binding for {removeId}");
+                            CommandChat.Print(removed ? $"Unbound {removeId}" : $"No binding for {removeId}");
                             return true;
                         }
                         else
@@ -1767,7 +1798,7 @@ namespace QuickSort
                                 return false;
                             }
                             string key = Extensions.NormalizeName(target);
-                            ChatCommandAPI.ChatCommandAPI.Print(removed ? $"Unbound {key}" : $"No binding for {key}");
+                            CommandChat.Print(removed ? $"Unbound {key}" : $"No binding for {key}");
                             return true;
                         }
                     }
@@ -1790,7 +1821,7 @@ namespace QuickSort
                             error = setErr ?? "Failed to bind shortcut.";
                             return false;
                         }
-                        ChatCommandAPI.ChatCommandAPI.Print($"Bound {bindShortcutId} => {itemKey}");
+                        CommandChat.Print($"Bound {bindShortcutId} => {itemKey}");
                         return true;
                     }
 
@@ -1800,7 +1831,7 @@ namespace QuickSort
                         return false;
                     }
 
-                    ChatCommandAPI.ChatCommandAPI.Print($"Bound {Extensions.NormalizeName(nameOrIdRaw)} => {itemKey}");
+                    CommandChat.Print($"Bound {Extensions.NormalizeName(nameOrIdRaw)} => {itemKey}");
                     return true;
                 }
 
@@ -1830,9 +1861,9 @@ namespace QuickSort
                     }
 
                     if (removed)
-                        ChatCommandAPI.ChatCommandAPI.Print($"Removed saved sort position for '{resetKey}'.");
+                        CommandChat.Print($"Removed saved sort position for '{resetKey}'.");
                     else
-                        ChatCommandAPI.ChatCommandAPI.Print($"No saved sort position for '{resetKey}'.");
+                        CommandChat.Print($"No saved sort position for '{resetKey}'.");
 
                     return true;
                 }
@@ -1848,20 +1879,20 @@ namespace QuickSort
                         string qNorm = Extensions.NormalizeName(setQuery);
                         if (!string.IsNullOrWhiteSpace(qNorm) && qNorm != resolvedKey)
                         {
-                            ChatCommandAPI.ChatCommandAPI.Print($"Resolved '{setQuery}' => '{resolvedKey}'.");
+                            CommandChat.Print($"Resolved '{setQuery}' => '{resolvedKey}'.");
                         }
                     }
 
                     string label = string.IsNullOrWhiteSpace(resolvedKey) ? "held_item" : resolvedKey;
                     if (SortPositions.TryGet(resolvedKey, out var saved, out var readErr))
                     {
-                        ChatCommandAPI.ChatCommandAPI.Print(
+                        CommandChat.Print(
                             $"Saved sort position for '{label}' => (x={saved.x:F2}, y={saved.y:F2}, z={saved.z:F2}).");
                     }
                     else
                     {
                         if (readErr != null) QuickSort.Log.Warning(readErr);
-                        ChatCommandAPI.ChatCommandAPI.Print($"Saved sort position for '{label}'.");
+                        CommandChat.Print($"Saved sort position for '{label}'.");
                     }
                     return true;
                 }
@@ -1877,13 +1908,13 @@ namespace QuickSort
 
                     if (list.Count == 0)
                     {
-                        ChatCommandAPI.ChatCommandAPI.Print("No saved sort positions.");
+                        CommandChat.Print("No saved sort positions.");
                         return true;
                     }
 
                     string text = string.Join(", ", list.Take(8).Select(p => $"{p.itemKey}=(x={p.shipLocalPos.x:F1},y={p.shipLocalPos.y:F1},z={p.shipLocalPos.z:F1})"));
                     if (list.Count > 8) text += ", ...";
-                    ChatCommandAPI.ChatCommandAPI.Print(text);
+                    CommandChat.Print(text);
                     return true;
                 }
 
@@ -1906,20 +1937,20 @@ namespace QuickSort
 
                     if (shortcuts.Count == 0 && aliases.Count == 0)
                     {
-                        ChatCommandAPI.ChatCommandAPI.Print("No bindings found.");
+                        CommandChat.Print("No bindings found.");
                         return true;
                     }
 
                     if (shortcuts.Count > 0)
                     {
                         string text = string.Join(", ", shortcuts.Select(s => $"{s.id}={s.itemKey}"));
-                        ChatCommandAPI.ChatCommandAPI.Print(text);
+                        CommandChat.Print(text);
                     }
                     if (aliases.Count > 0)
                     {
                         string text = string.Join(", ", aliases.Take(12).Select(a => $"{a.alias}={a.itemKey}"));
                         if (aliases.Count > 12) text += ", ...";
-                        ChatCommandAPI.ChatCommandAPI.Print(text);
+                        CommandChat.Print(text);
                     }
 
                     return true;
@@ -1985,7 +2016,7 @@ namespace QuickSort
     // - /sp      == /sort positions
     // - /sbl     == /sort bindings
     // - /sk ...  == /sort skip ...
-    public class SortBindCommand : Command
+    public class SortBindCommand : QuickSortCommand
     {
         public override string Name => "sb";
         public override string[] Commands => new[] { "sb", Name };
@@ -1994,15 +2025,15 @@ namespace QuickSort
             "Usage:\n" +
             "  /sb <name|id>  -> bind your HELD item to an alias name OR shortcut id";
 
-        public override bool Invoke(string[] args, Dictionary<string, string> kwargs, out string? error)
+        protected override bool InvokeParsed(string[] args, out string? error)
         {
             // Reuse SortCommand by injecting the subcommand token.
             var forwarded = new[] { "bind" }.Concat(args ?? Array.Empty<string>()).ToArray();
-            return new SortCommand().Invoke(forwarded, kwargs, out error);
+            return SortCommand.InvokeSort(forwarded, out error);
         }
     }
 
-    public class SortSetCommand : Command
+    public class SortSetCommand : QuickSortCommand
     {
         public override string Name => "ss";
         public override string[] Commands => new[] { "ss", Name };
@@ -2011,14 +2042,14 @@ namespace QuickSort
             "Usage:\n" +
             "  /ss [itemName]  -> set saved sort position for this type (name optional if holding; partial match supported)";
 
-        public override bool Invoke(string[] args, Dictionary<string, string> kwargs, out string? error)
+        protected override bool InvokeParsed(string[] args, out string? error)
         {
             var forwarded = new[] { "set" }.Concat(args ?? Array.Empty<string>()).ToArray();
-            return new SortCommand().Invoke(forwarded, kwargs, out error);
+            return SortCommand.InvokeSort(forwarded, out error);
         }
     }
 
-    public class SortResetCommand : Command
+    public class SortResetCommand : QuickSortCommand
     {
         public override string Name => "sr";
         public override string[] Commands => new[] { "sr", Name };
@@ -2027,14 +2058,14 @@ namespace QuickSort
             "Usage:\n" +
             "  /sr [itemName]  -> delete saved sort position for this type (name optional if holding)";
 
-        public override bool Invoke(string[] args, Dictionary<string, string> kwargs, out string? error)
+        protected override bool InvokeParsed(string[] args, out string? error)
         {
             var forwarded = new[] { "reset" }.Concat(args ?? Array.Empty<string>()).ToArray();
-            return new SortCommand().Invoke(forwarded, kwargs, out error);
+            return SortCommand.InvokeSort(forwarded, out error);
         }
     }
 
-    public class SortPositionsCommand : Command
+    public class SortPositionsCommand : QuickSortCommand
     {
         public override string Name => "sp";
         public override string[] Commands => new[] { "sp", Name };
@@ -2043,15 +2074,15 @@ namespace QuickSort
             "Usage:\n" +
             "  /sp  -> list saved sort positions";
 
-        public override bool Invoke(string[] args, Dictionary<string, string> kwargs, out string? error)
+        protected override bool InvokeParsed(string[] args, out string? error)
         {
             // Ignore args; keep behavior deterministic
             var forwarded = new[] { "positions" };
-            return new SortCommand().Invoke(forwarded, kwargs, out error);
+            return SortCommand.InvokeSort(forwarded, out error);
         }
     }
 
-    public class SortBindingsListCommand : Command
+    public class SortBindingsListCommand : QuickSortCommand
     {
         public override string Name => "sbl";
         public override string[] Commands => new[] { "sbl", Name };
@@ -2060,14 +2091,14 @@ namespace QuickSort
             "Usage:\n" +
             "  /sbl  -> list bindings (shortcuts + aliases)";
 
-        public override bool Invoke(string[] args, Dictionary<string, string> kwargs, out string? error)
+        protected override bool InvokeParsed(string[] args, out string? error)
         {
             var forwarded = new[] { "bindings" };
-            return new SortCommand().Invoke(forwarded, kwargs, out error);
+            return SortCommand.InvokeSort(forwarded, out error);
         }
     }
 
-    public class SortSkipCommand : Command
+    public class SortSkipCommand : QuickSortCommand
     {
         public override string Name => "sk";
         public override string[] Commands => new[] { "sk", Name };
@@ -2078,14 +2109,14 @@ namespace QuickSort
             "  /sk add [itemName]  -> add token (or use held item if omitted)\n" +
             "  /sk remove [itemName] -> remove token (or use held item if omitted)";
 
-        public override bool Invoke(string[] args, Dictionary<string, string> kwargs, out string? error)
+        protected override bool InvokeParsed(string[] args, out string? error)
         {
             var forwarded = new[] { "skip" }.Concat(args ?? Array.Empty<string>()).ToArray();
-            return new SortCommand().Invoke(forwarded, kwargs, out error);
+            return SortCommand.InvokeSort(forwarded, out error);
         }
     }
 
-    public class PileCommand : Command
+    public class PileCommand : QuickSortCommand
     {
         public override string Name => "pile";
         public override string[] Commands => new[] { "pile", Name };
@@ -2095,13 +2126,13 @@ namespace QuickSort
             "  /pile <itemName>  -> pull that item type to YOUR position (partial match supported)\n" +
             "  /pile             -> uses your HELD item type and also moves the held item";
 
-        public override bool Invoke(string[] args, Dictionary<string, string> kwargs, out string? error)
+        protected override bool InvokeParsed(string[] args, out string? error)
         {
             error = null;
 
             if (args.Length > 0 && args[0] == "help")
             {
-                ChatCommandAPI.ChatCommandAPI.Print(Description);
+                CommandChat.Print(Description);
                 return true;
             }
 

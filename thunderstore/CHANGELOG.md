@@ -1,5 +1,11 @@
 ## Changelog
 
+## 0.1.16
+- **Fix**
+  - `shotgun` and `ammo` are no longer forced back into `skippedItems` after users remove them.
+- **Compatibility**
+  - Updated ChatCommandAPI support for `baer1-ChatCommandAPI-1.1.2`.
+
 ## 0.1.15
 - **Change**
   - Modified to sort all items on the map in certain situations.

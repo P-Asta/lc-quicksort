@@ -77,7 +77,8 @@ All files are created under `BepInEx/config`.
   - If a token accidentally has leading/trailing `_` (e.g. `_kitchen_knife`), it is normalized.
 - **Config migration (0.1.5)**:
   - If `configVersion` is missing / older than `0.1.5`, and `sortOriginY` is `0.5`, it will be auto-changed to `0.1`.
-  - Also adds `shotgun`, `ammo` into `skippedItems` (if missing).
+- **Config migration (0.1.9)**:
+  - Removes old auto-added `shotgun`, `ammo` tokens from `skippedItems`; you can add them back manually if desired.
 
 ## SS
 ![alt text](https://raw.githubusercontent.com/P-Asta/lc-QuickSort/refs/heads/main/assets/image.png)
