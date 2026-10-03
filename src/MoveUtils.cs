@@ -83,6 +83,10 @@ namespace QuickSort
             {
                 // Place locally + ask server to place & parent to ship.
                 player.PlaceGrabbableObject(ship.transform, shipLocalPos, false, item);
+                // A QuickSort cruiser pile keeps its Rigidbody kinematic until it leaves
+                // the vehicle. Restore the original physics state as soon as ship
+                // placement succeeds, rather than waiting for its next Update.
+                CruiserShelfAnchor.Detach(item);
                 player.PlaceObjectServerRpc(item.NetworkObject, ship, shipLocalPos, false);
             }
             catch

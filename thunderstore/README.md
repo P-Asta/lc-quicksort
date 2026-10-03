@@ -8,12 +8,13 @@ If you are a **client (guest)**, installing **[TooManyItems](https://thunderstor
 
 ## Commands
 - **Tip**: If a command shows **`[itemName]`**, the name is optional — if you omit it, the command will use the **item you are currently holding** (if any).
-- **`/sort`**: Full sort (sort everything in the ship).
+- **`/sort`**: Full sort of eligible items in the ship and cruiser, bringing cruiser cargo into the ship layout.
   - Uses `skippedItems` as the skip list for full sort.
   - An item you are holding stays in your hand.
 - **`/sort -a`**: Full sort, but **IGNORE `skippedItems`** (sort absolutely everything that is eligible).
 - **`/sort -b`**: Full sort with “saved position priority”.
   - If an item type has a saved `/sort set` position, it will **NOT** be skipped even if it matches `skippedItems`.
+  - It also brings matching cruiser items to their saved **ship** position. A `/css` cruiser position does not determine their ship destination or override `skippedItems`.
   - Otherwise (no saved position), `skippedItems` still applies.
   - **Note**: `-a` and `-b` cannot be combined (and `/sort -ab` / `/sort -ba` are rejected).
 - **`/sort <itemName>`**: Move that item type to your current position (e.g. `/sort cash_register`, `/sort weed killer` or `/sort wee`).
@@ -52,6 +53,7 @@ Use bindings:
 ### Saved positions
 - **`/sort set [itemName]`**: Save this type's sort position to your current position (**partial match supported**).
 - **`/ss [itemName]`**: same as `/sort set ...` (**partial match supported**).
+- Ship positions saved with `/ss` are separate from cruiser positions saved with `/css`, even for the same item type. `/sort -b` uses the ship position; `/cs` uses the cruiser position and maximum.
 - **`/sort reset [itemName]`**: Delete saved sort position.
 - **`/sr [itemName]`**: same as `/sort reset ...`
 - **`/sort positions`**: List saved sort positions.
@@ -64,13 +66,13 @@ Use bindings:
 - **`/css <zone> [itemName] [max]`**: While on or near the cruiser, save a shelf zone for an item type and immediately place matching items there, up to the maximum. Omit the item name to use the held item, or `max` to use **10** (allowed range: 1–10000). For example, `/css A2 shotgun` places up to 10 shotguns on shelf zone A2; `/css A2 shotgun 2` places up to two.
 - **`/css [itemName] [max]`**: While standing on the cruiser, save your current position instead of a shelf zone and immediately place matching items there. A matching item in your hand is also placed if there is room. The item name defaults to the held item; `max` defaults to **10**.
 - **Alternative shelf forms**: `/css shelf A2 shotgun 2` and CruiserLoader-style `/css shotgun 2 A2` both save the same shelf rule as `/css A2 shotgun 2`.
-- **`/css zones`**: List the available shelf zones. A, B, C, E, F, and G each have three shelf levels (`A1`–`A3`, etc.); `D1`–`D3` are the center spots. `D2` is the radar booster spot, where items do not fan out. See [CruiserLoader's zone layout image](https://github.com/veber01/LC-CruiserLoader/blob/main/ZoneLayout.png) to choose a zone.
+- **`/css zones`**: List the available shelf zones. A, B, C, E, F, and G each have three shelf levels (`A1`–`A3`, etc.); `D1`–`D3` are the center spots. `D2` is the radar booster spot and holds one item. See [CruiserLoader's zone layout image](https://github.com/veber01/LC-CruiserLoader/blob/main/ZoneLayout.png) to choose a zone.
 - **`/css list`**: Show saved cruiser positions and maximum counts.
 - **`/css reset [itemName]`**: Remove a saved cruiser position. Omit the name to use the held item.
 - **`/csort`**: Arrange configured items already in the nearest cruiser, including saved shelf zones, and load matching items from the ship, up to each type's saved maximum. You can run this command without standing on the cruiser. Items beyond a saved maximum stay where they are.
 - **`/cs`**: Short form of `/csort`.
 
-Shelf zones and maximum counts are saved with QuickSort's cruiser positions and included in QuickSort profiles. `/cs` uses the saved rules when sorting. A shelf zone holds at most **20 items total** across all types assigned to it (five positions on each of four layers, 0.15 m between layers); `D2` holds **one**. The `[max]` setting accepts values up to 10000, but sorting stops at the zone's physical capacity and reports when it is reached. Shelf placement moves items directly to their targets without a fall animation, reducing the chance of one item pushing another during sorting.
+`/css` saves the selected cruiser position with **0.3 added to its cruiser-local Y coordinate**. Existing manually saved cruiser positions retain their old Y until you run `/css` again at that position. When arranging multiple items of the same type, `/css` and `/cs` keep their X/Z position fixed and increase only Y by the `sameTypeStackStepY` setting per item (default **0**, exact overlap). Shelf zones and maximum counts are saved with QuickSort's cruiser positions and included in QuickSort profiles. `/cs` uses these rules. A shelf zone holds at most **20 items total** across all types assigned to it; `D2` holds **one**. The `[max]` setting accepts values up to 10000, but sorting stops at the zone's capacity and reports when it is reached. Shelf placement moves items directly to their targets without a fall animation, reducing the chance of one item pushing another during sorting.
 
 QuickSort keeps placed shelf items steady relative to the cruiser while they remain on the shelf, then releases them on pickup or removal. In multiplayer, full physics anchoring requires QuickSort on the item's authority (usually the host); direct placement still works when some players do not have QuickSort.
 

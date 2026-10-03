@@ -1,5 +1,10 @@
 ## Changelog
 
+### 0.1.22
+- Fixed cruiser shelf items tilting after sorting by applying their item-specific resting rotation relative to the vehicle.
+- Kept `/ss` ship positions and `/css` cruiser positions independent for the same item type. `/sort` now collects eligible cruiser cargo into the ship; `/sort -b` returns types with a saved `/ss` position there even when skipped; `/cs` continues to use `/css` cruiser rules and maximum counts.
+- `/css` now saves the cruiser-local Y position 0.3 higher. Previously saved manual positions keep their Y until re-saved. Cruiser sorting stacks items of the same type at a fixed X/Z, raising Y by `sameTypeStackStepY` per item (default 0), while retaining the shared shelf-zone capacity.
+
 ### 0.1.21
 - Added numbered cruiser shelf zones (`A1`–`C3`, `D1`–`D3`, `E1`–`G3`) with `/css <zone> [itemName] [max]` and `/css zones`. `/css shelf <zone> ...` and CruiserLoader-style `/css <itemName> <max> <zone>` are aliases. Saving a shelf rule immediately places matching items; QuickSort profiles save the rule, and `/csort` and `/cs` reuse it.
 - Shelf zone placement now uses direct placement to avoid fall animation pushing other cargo during sorting.

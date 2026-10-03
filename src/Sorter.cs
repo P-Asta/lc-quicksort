@@ -390,7 +390,7 @@ namespace QuickSort
                 return;
             }
 
-            CategorizeItems();
+            CategorizeItems(includeCruiserCargo: true);
             Log.ConfirmSound();
             StartCoroutine(SortItems(force: false, ignoreSkippedItems: false));
         }
@@ -445,7 +445,8 @@ namespace QuickSort
                     ignoreSkippedItems ||
                     (includeSavedPositionTypesEvenIfSkipped && savedTypes != null && savedTypes.Contains(itemName));
 
-                if (ShouldSkipFullSort(item, ignoreSkipTokens: ignoreSkipTokensForThisItem))
+                if (ShouldSkipFullSort(item, ignoreSkipTokens: ignoreSkipTokensForThisItem,
+                    allowCruiserCargo: true))
                     continue;
 
                 if (!groupedItems.ContainsKey(itemName))
@@ -562,7 +563,10 @@ namespace QuickSort
 
                     Vector3 worldPos = ship.transform.TransformPoint(targetLocal);
 
-                    if (!force && Vector3.Distance(worldPos, item.transform.position) < 0.25f)
+                    // An item can be physically near its /ss target while still parented
+                    // to the cruiser. It must be transferred back to the ship anyway.
+                    bool onCruiser = CruiserSorter.IsCruiserCargo(item);
+                    if (!force && !onCruiser && Vector3.Distance(worldPos, item.transform.position) < 0.25f)
                     {
                         continue;
                     }
@@ -573,7 +577,9 @@ namespace QuickSort
                     // yields. Do not send one more placement after settings restore.
                     if (!inProgress || Player.Local == null) yield break;
 
-                    if (!ShouldSkipFullSort(item, ignoreSkipTokens: (ignoreSkippedItems || ignoreSkipTokensForThisType)))
+                    if (!ShouldSkipFullSort(item,
+                        ignoreSkipTokens: (ignoreSkippedItems || ignoreSkipTokensForThisType),
+                        allowCruiserCargo: true))
                     {
                         // Teleport item into place (server will apply via ServerRpc)
                         item.floorYRot = -1;
@@ -1223,7 +1229,8 @@ namespace QuickSort
             return layout;
         }
 
-        public void CategorizeItems(bool includeSkippedItems = false)
+        public void CategorizeItems(bool includeSkippedItems = false,
+            bool includeCruiserCargo = false)
         {
             scrap = new List<GrabbableObject>();
 
@@ -1234,8 +1241,10 @@ namespace QuickSort
                 // Include ALL grabbable items that are inside the ship room (not only scrap).
                 // Store-bought items like shovel/weedkiller are not scrap and were previously excluded.
                 // When the ship is in orbit or at Company/Gordion, include every detected item.
-                bool skip = includeSkippedItems ? ShouldSkipExplicitQuery(item) : ShouldSkip(item);
-                if (!skip && ShouldIncludeItemByLocation(item))
+                bool skip = includeSkippedItems
+                    ? ShouldSkipExplicitQuery(item, includeCruiserCargo)
+                    : ShouldSkip(item, includeCruiserCargo);
+                if (!skip && ShouldIncludeItemByLocation(item, includeCruiserCargo))
                 {
                     scrap.Add(item);
                 }
@@ -1247,12 +1256,14 @@ namespace QuickSort
                         .ToList();
         }
 
-        private static bool ShouldIncludeItemByLocation(GrabbableObject item)
+        private static bool ShouldIncludeItemByLocation(GrabbableObject item,
+            bool allowCruiserCargo = false)
         {
-            // A cruiser can be parked in or near the ship. Its cargo must remain available
-            // to csort instead of being pulled into the ship's layout by /sort.
-            if (item == null || item.GetComponentInParent<VehicleController>() != null)
-                return false;
+            if (item == null) return false;
+            // Full ship sorting can collect cruiser cargo as well. Commands that only
+            // query or move a named ship type retain the ordinary ship-only filter.
+            if (CruiserSorter.IsCruiserCargo(item))
+                return allowCruiserCargo;
 
             return Ship.ShouldSortAllDetectedItems || item.isInShipRoom;
         }
@@ -1277,7 +1288,8 @@ namespace QuickSort
 
         // For explicit item queries (/sort <item>), we should NOT apply the user's skip lists.
         // Otherwise, any type listed in skippedItems becomes "unsortable" even when requested directly.
-        private bool ShouldSkipExplicitQuery(GrabbableObject item)
+        private bool ShouldSkipExplicitQuery(GrabbableObject item,
+            bool allowCruiserCargo = false)
         {
             if (item == null) return true;
 
@@ -1288,7 +1300,7 @@ namespace QuickSort
             if (item.Name() == "body")
                 return true;
 
-            if (!ShouldIncludeItemByLocation(item))
+            if (!ShouldIncludeItemByLocation(item, allowCruiserCargo))
                 return true;
 
             return false;
@@ -1430,7 +1442,7 @@ namespace QuickSort
             return assetKey.Contains(token);
         }
 
-        private bool ShouldSkip(GrabbableObject item)
+        private bool ShouldSkip(GrabbableObject item, bool allowCruiserCargo = false)
         {
             if (item == null)
             {
@@ -1448,7 +1460,7 @@ namespace QuickSort
                 return true;
             }
 
-            if (!ShouldIncludeItemByLocation(item))
+            if (!ShouldIncludeItemByLocation(item, allowCruiserCargo))
             {
                 return true;
             }
@@ -1474,7 +1486,8 @@ namespace QuickSort
 
         // Full sort (/sort with no item name) uses skippedItems as a GLOBAL skip list,
         // regardless of scrap vs non-scrap, per user preference.
-        private bool ShouldSkipFullSort(GrabbableObject item, bool ignoreSkipTokens = false)
+        private bool ShouldSkipFullSort(GrabbableObject item, bool ignoreSkipTokens = false,
+            bool allowCruiserCargo = false)
         {
             if (item == null) return true;
 
@@ -1484,7 +1497,7 @@ namespace QuickSort
             if (item.Name() == "body")
                 return true;
 
-            if (!ShouldIncludeItemByLocation(item))
+            if (!ShouldIncludeItemByLocation(item, allowCruiserCargo))
                 return true;
 
             if (ignoreSkipTokens)
@@ -2037,7 +2050,9 @@ namespace QuickSort
             // If -a is set, we ignore skippedItems entirely.
             // If -b is set, we must include skipped types in the scan so SortItems can selectively keep only
             // the ones that have saved positions.
-            sorter.CategorizeItems(includeSkippedItems: (ignoreSkippedItems || includeSavedPositionTypesEvenIfSkipped));
+            sorter.CategorizeItems(
+                includeSkippedItems: (ignoreSkippedItems || includeSavedPositionTypesEvenIfSkipped),
+                includeCruiserCargo: true);
             Log.ConfirmSound();
             sorter.StartCoroutine(sorter.SortItems(force: false, ignoreSkippedItems: ignoreSkippedItems, includeSavedPositionTypesEvenIfSkipped: includeSavedPositionTypesEvenIfSkipped));
             QuickSort.Log.Info("SortCommand executed successfully (full sort)");

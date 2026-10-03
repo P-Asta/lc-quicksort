@@ -13,7 +13,7 @@ namespace QuickSort
     internal static class CruiserSorter
     {
         private const int MaxShelfZoneSlots = 20;
-        private const float ShelfLayerSpacing = 0.15f;
+        internal const float SavedHeightOffset = 0.3f;
 
         private static int ZoneCapacity(string zone) => zone == "D2" ? 1 : MaxShelfZoneSlots;
 
@@ -53,7 +53,10 @@ namespace QuickSort
         internal static string? ZoneAt(Vector3 position)
         {
             foreach (var zone in Zones)
-                if ((zone.Value - position).sqrMagnitude < 0.000001f)
+                if (Mathf.Abs(zone.Value.x - position.x) < 0.001f &&
+                    Mathf.Abs(zone.Value.z - position.z) < 0.001f &&
+                    (Mathf.Abs(zone.Value.y - position.y) < 0.001f ||
+                     Mathf.Abs(zone.Value.y + SavedHeightOffset - position.y) < 0.001f))
                     return zone.Key;
             return null;
         }
@@ -296,6 +299,32 @@ namespace QuickSort
                 ? region.physicsTransform : cruiser.transform;
         }
 
+        private static int cargoParentCacheFrame = -1;
+        private static Transform[] cargoParentCache = Array.Empty<Transform>();
+
+        internal static bool IsCruiserCargo(GrabbableObject item)
+        {
+            if (item == null || item.transform == null) return false;
+            if (item.GetComponentInParent<VehicleController>() != null) return true;
+
+            // The vehicle's physics region can use a separate transform as the cargo
+            // parent. Cache those transforms for this frame so a ship sort does not
+            // search the scene once per item.
+            if (cargoParentCacheFrame != Time.frameCount)
+            {
+                cargoParentCacheFrame = Time.frameCount;
+                cargoParentCache = UnityEngine.Object.FindObjectsOfType<VehicleController>()
+                    .Where(cruiser => cruiser != null)
+                    .Select(PlacementParent)
+                    .Distinct()
+                    .ToArray();
+            }
+            foreach (var parent in cargoParentCache)
+                if (parent != null && item.transform.IsChildOf(parent))
+                    return true;
+            return false;
+        }
+
         private static Vector3 PlacementOffset(VehicleController cruiser, Transform parent,
             Vector3 cruiserLocalPosition) =>
             parent.InverseTransformPoint(cruiser.transform.TransformPoint(cruiserLocalPosition));
@@ -341,30 +370,71 @@ namespace QuickSort
 
         private static Vector3 Placement(Vector3 origin, int index)
         {
+            // Cruiser piles use one X/Z point regardless of the ship's sort layout.
+            // The configured step only controls vertical spacing between objects.
+            // Rules saved before the +0.3m change used the shelf zone's base Y.
+            // Raise those at placement time without changing the saved profile or
+            // adding the offset twice to newly saved zone rules.
             string? zone = ZoneAt(origin);
-            if (zone != null)
-            {
-                int offset = index % 5;
-                float layer = ShelfLayerSpacing * (index / 5);
-                if (zone == "D1") return origin + new Vector3(0.1f * offset, layer, 0f);
-                if (zone == "D3") return origin + new Vector3(-0.1f * offset, layer, 0f);
-                if (zone == "D2") return origin + new Vector3(0f, layer, 0f);
-                return origin + new Vector3(0f, layer, 0.1f * offset);
-            }
-            return origin + new Vector3(0f, 0.04f * (index / 5), 0.1f * (index % 5));
+            if (zone != null && Mathf.Abs(origin.y - Zones[zone].y) < 0.001f)
+                origin.y += SavedHeightOffset;
+            float step = Plugin.sorterObject?.GetComponent<Sorter>()?.sameTypeStackStepY?.Value ?? 0f;
+            if (float.IsNaN(step) || float.IsInfinity(step)) step = 0f;
+            return origin + new Vector3(0f, index * Mathf.Max(0f, step), 0f);
         }
 
-        internal static bool IsShelfSlot(Vector3 cruiserLocalPosition)
+        internal static bool IsShelfSlot(GrabbableObject item, Vector3 cruiserLocalPosition)
         {
-            foreach (var zone in Zones)
-                for (int index = 0; index < ZoneCapacity(zone.Key); index++)
-                    if ((Placement(zone.Value, index) - cruiserLocalPosition).sqrMagnitude < 0.0004f)
-                        return true;
+            // The placement RPC has no QuickSort rule ID. Match the active CSS rule,
+            // item type and one of its possible stack heights before pinning on peers.
+            // A synced host profile supplies these same rules and stack settings.
+            if (item == null || item.itemProperties == null) return false;
+            string itemKey = item.Name();
+            var rules = CruiserPositions.ListAll(out var error);
+            if (error != null)
+            {
+                QuickSort.Log.Warning(error);
+                return false;
+            }
+            float step = Plugin.sorterObject?.GetComponent<Sorter>()?.sameTypeStackStepY?.Value ?? 0f;
+            if (float.IsNaN(step) || float.IsInfinity(step)) step = 0f;
+            step = Mathf.Max(0f, step);
+            const float coordinateTolerance = 0.03f;
+            foreach (var rule in rules)
+            {
+                if (rule.itemKey != itemKey ||
+                    Mathf.Abs(rule.cruiserLocalPos.x - cruiserLocalPosition.x) >= coordinateTolerance ||
+                    Mathf.Abs(rule.cruiserLocalPos.z - cruiserLocalPosition.z) >= coordinateTolerance)
+                    continue;
+
+                string? zone = ZoneAt(rule.cruiserLocalPos);
+                float baseY = rule.cruiserLocalPos.y;
+                if (zone != null && Mathf.Abs(baseY - Zones[zone].y) < 0.001f)
+                    baseY += SavedHeightOffset;
+                int slots = zone == null ? rule.maxCount : ZoneCapacity(zone);
+                if (slots <= 0) continue;
+                float deltaY = cruiserLocalPosition.y - baseY;
+                if (step <= 0f)
+                {
+                    if (Mathf.Abs(deltaY) < coordinateTolerance) return true;
+                    continue;
+                }
+                float slot = deltaY / step;
+                // For a named zone, other CSS item types can occupy earlier shared
+                // slots, so use the zone capacity rather than this type's maximum.
+                if (slot < -coordinateTolerance / step ||
+                    slot > slots - 1 + coordinateTolerance / step)
+                    continue;
+                int nearestSlot = Mathf.RoundToInt(slot);
+                if (nearestSlot >= 0 && nearestSlot < slots &&
+                    Mathf.Abs(deltaY - nearestSlot * step) < coordinateTolerance)
+                    return true;
+            }
             return false;
         }
 
         private static bool PlaceOnCruiser(GrabbableObject item, VehicleController cruiser,
-            Vector3 localPosition, bool shelfZone)
+            Vector3 localPosition)
         {
             var player = Player.Local;
             var cruiserNet = cruiser.GetComponent<NetworkObject>();
@@ -388,15 +458,17 @@ namespace QuickSort
                 // to its physics transform, so the offset must be local to that transform.
                 item.transform.SetParent(placementParent, worldPositionStays: true);
                 item.transform.localPosition = placementLocal;
-                if (shelfZone) item.transform.localEulerAngles = Vector3.zero;
-                item.fallTime = shelfZone ? 1.1f : 1f;
+                Vector3 resting = item.itemProperties.restingRotation;
+                item.transform.rotation = cruiser.transform.rotation *
+                    Quaternion.Euler(resting.x, 0f, resting.z);
+                item.fallTime = 1.1f;
                 item.reachedFloorTarget = true;
                 item.hasHitGround = true;
                 item.targetFloorPosition = placementLocal;
                 item.startFallingPosition = placementLocal;
-                // The shelf path uses vanilla's direct placement mode on every client.
-                // It avoids a fall animation sweeping the item across other shelf cargo.
-                player.PlaceObjectServerRpc(item.NetworkObject, cruiserNet, placementLocal, shelfZone);
+                // Direct placement avoids the vanilla fall animation sweeping the item
+                // through other cargo and moving it away from its saved X/Z point.
+                player.PlaceObjectServerRpc(item.NetworkObject, cruiserNet, placementLocal, true);
             }
             catch (Exception e)
             {
@@ -433,8 +505,7 @@ namespace QuickSort
                     QuickSort.Log.Warning($"Cruiser physics sync failed for '{item.Name()}': {e.Message}");
                 }
             }
-            if (shelfZone)
-                CruiserShelfAnchor.Attach(item, placementParent);
+            CruiserShelfAnchor.Attach(item, placementParent, cruiser.transform);
             return true;
         }
 
@@ -481,9 +552,8 @@ namespace QuickSort
                                     held.floorYRot = -1;
                                     Vector3 target = Placement(rule.cruiserLocalPos, heldSlot);
                                     Transform parent = PlacementParent(cruiser);
-                                    bool shelfZone = ZoneAt(rule.cruiserLocalPos) != null;
                                     player.DiscardHeldObject(true, cruiserNet,
-                                        PlacementOffset(cruiser, parent, target), shelfZone);
+                                        PlacementOffset(cruiser, parent, target), true);
                                 }
                                 dropStarted = true;
                             }
@@ -513,14 +583,39 @@ namespace QuickSort
                                     if (held != null && cruiser != null &&
                                         !held.isHeld && held.transform.IsChildOf(PlacementParent(cruiser)))
                                     {
-                                        if (ZoneAt(rule.cruiserLocalPos) != null)
-                                            CruiserShelfAnchor.Attach(held, PlacementParent(cruiser));
+                                        Transform cargoParent = PlacementParent(cruiser);
+                                        Vector3 targetLocal = PlacementOffset(cruiser, cargoParent,
+                                            Placement(rule.cruiserLocalPos, heldSlot));
+                                        held.transform.localPosition = targetLocal;
+                                        held.targetFloorPosition = targetLocal;
+                                        held.startFallingPosition = targetLocal;
+                                        held.fallTime = 1.1f;
+                                        held.reachedFloorTarget = true;
+                                        held.hasHitGround = true;
+                                        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsHost)
+                                        {
+                                            try
+                                            {
+                                                var body = held.GetComponent<Rigidbody>();
+                                                if (body != null)
+                                                {
+                                                    body.position = cargoParent.TransformPoint(targetLocal);
+                                                    body.velocity = Vector3.zero;
+                                                    body.angularVelocity = Vector3.zero;
+                                                }
+                                                Physics.SyncTransforms();
+                                            }
+                                            catch (Exception e)
+                                            {
+                                                QuickSort.Log.Warning($"Cruiser physics sync failed for held '{rule.itemKey}': {e.Message}");
+                                            }
+                                        }
+                                        CruiserShelfAnchor.Attach(held, cargoParent, cruiser.transform);
                                         placed++;
                                     }
                                     else if (held != null && cruiser != null && Eligible(held) &&
                                         PlaceOnCruiser(held, cruiser,
-                                            Placement(rule.cruiserLocalPos, heldSlot),
-                                            ZoneAt(rule.cruiserLocalPos) != null))
+                                            Placement(rule.cruiserLocalPos, heldSlot)))
                                         placed++;
                                     else
                                         QuickSort.Log.Warning($"Could not confirm cruiser placement for held '{rule.itemKey}'.");
@@ -541,7 +636,7 @@ namespace QuickSort
                     .Where(item => item != droppedHeld && Eligible(item)).ToList();
                 var shipItems = UnityEngine.Object.FindObjectsOfType<GrabbableObject>()
                     .Where(item => item != droppedHeld && Eligible(item) &&
-                        item.GetComponentInParent<VehicleController>() == null &&
+                        !IsCruiserCargo(item) &&
                         IsShipCargo(item, ship))
                     .ToList();
 
@@ -578,7 +673,7 @@ namespace QuickSort
                         int slot = startSlot + index;
                         if (reserved > 0 && slot >= heldSlot) slot++;
                         if (Eligible(item) && PlaceOnCruiser(item, cruiser,
-                            Placement(rule.cruiserLocalPos, slot), zone != null))
+                            Placement(rule.cruiserLocalPos, slot)))
                             placed++;
                         yield return null;
                     }
@@ -672,6 +767,9 @@ namespace QuickSort
                 cruiser == null)
                 return false;
             if (zoneName != null) localPosition = zonePosition;
+            // Save a little above the player-selected point or CruiserLoader shelf
+            // coordinate, then preserve this exact base point on later /cs runs.
+            localPosition += Vector3.up * CruiserSorter.SavedHeightOffset;
             int maximum = 10;
             string[] nameArgs = placementArgs;
             // A real item name may end with a number (e.g. "Wet Note 1"). Prefer an
