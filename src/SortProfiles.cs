@@ -11,9 +11,8 @@ using CommandChat = ChatCommandAPI.Utils.Chat;
 namespace QuickSort
 {
     /// <summary>
-    /// Named snapshots of the settings used by ship and cruiser sorting. A snapshot is
-    /// deliberately explicit: edits to positions or the skip list are saved into a
-    /// profile only when the player runs /profile save again.
+    /// Named snapshots of the settings used by ship and cruiser sorting. Changes to
+    /// the active personal profile are kept when selecting another profile.
     /// </summary>
     internal static class SortProfiles
     {
@@ -433,6 +432,22 @@ namespace QuickSort
 
         private static bool IsFinite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
 
+        // Host selection replaces the live files temporarily. Keep edits to the
+        // personal profile before doing that, so a later /pu does not reload an
+        // older ship position after the lobby ends or the user opts out.
+        private static bool SavePersonalBeforeHost(ProfileData current, out string? error)
+        {
+            if (!ValidateProfile(current, out error) || !TryLoad(out var file, out error))
+                return false;
+            if (!file.profiles.ContainsKey(file.activeProfile))
+            {
+                error = $"Active profile '{file.activeProfile}' was not found.";
+                return false;
+            }
+            file.profiles[file.activeProfile] = current;
+            return SaveFile(file, out error);
+        }
+
         private static bool ApplyCurrent(ProfileData data, out string? error)
         {
             if (!ValidateProfile(data, out error)) return false;
@@ -582,6 +597,11 @@ namespace QuickSort
                         QuickSort.Log.Warning(captureError ?? "Could not back up personal profile.");
                         return;
                     }
+                    if (!SavePersonalBeforeHost(before, out captureError))
+                    {
+                        QuickSort.Log.Warning(captureError ?? "Could not save personal profile before host selection.");
+                        return;
+                    }
                     if (!WriteHostRecovery(before, out captureError))
                     {
                         QuickSort.Log.Warning(captureError ?? "Could not back up personal profile.");
@@ -652,6 +672,7 @@ namespace QuickSort
                         }
                     }
                     if (!CaptureCurrent(out var before, out error)) return false;
+                    if (!SavePersonalBeforeHost(before, out error)) return false;
                     if (!WriteHostRecovery(before, out error)) return false;
                     beforeHostSelection = before;
                 }
@@ -733,6 +754,16 @@ namespace QuickSort
                 }
                 if (!ValidateProfile(target, out error)) return false;
                 if (!CaptureCurrent(out var before, out error)) return false;
+
+                // /ss, /css and BepInEx setting edits modify the live files. Save
+                // them into the profile being left before loading the next one.
+                if (!hostSelected &&
+                    !string.Equals(file.activeProfile, name, StringComparison.OrdinalIgnoreCase) &&
+                    file.profiles.ContainsKey(file.activeProfile))
+                {
+                    if (!ValidateProfile(before, out error)) return false;
+                    file.profiles[file.activeProfile] = before;
+                }
 
                 if (!ApplyCurrent(target, out error))
                 {

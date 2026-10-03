@@ -3,7 +3,7 @@
     <TargetFramework>netstandard2.1</TargetFramework>
     <AssemblyName>QuickSort</AssemblyName>
     <Description>made by Asta</Description>
-    <Version>0.1.22</Version>
+    <Version>0.1.23</Version>
     <LangVersion>Preview</LangVersion>
     <Nullable>enable</Nullable>
     <RestoreAdditionalProjectSources>

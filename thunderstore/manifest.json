@@ -1,6 +1,6 @@
 {
   "name": "QuickSort",
-  "version_number": "0.1.22",
+  "version_number": "0.1.23",
   "website_url": "https://github.com/P-Asta/lc-quicksort",
   "description": "Ship and cruiser item sorting with saved profiles for Lethal Company.",
   "dependencies": [

@@ -17,7 +17,7 @@ If you are a **client (guest)**, installing **[TooManyItems](https://thunderstor
   - It also brings matching cruiser items to their saved **ship** position. A `/css` cruiser position does not determine their ship destination or override `skippedItems`.
   - Otherwise (no saved position), `skippedItems` still applies.
   - **Note**: `-a` and `-b` cannot be combined (and `/sort -ab` / `/sort -ba` are rejected).
-- **`/sort <itemName>`**: Move that item type to your current position (e.g. `/sort cash_register`, `/sort weed killer` or `/sort wee`).
+- **`/sort <itemName>`**: Move that item type from the ship or cruiser to your current ship position (e.g. `/sort cash_register`, `/sort weed killer` or `/sort wee`).
   - This explicit move **ignores skip lists**, so it works even if the type is in `skippedItems`.
 - **`/sort <number>`**: Move the item type bound to that number (e.g. `/sort 1`).
 - **`/pile [itemName]`**: Like `/sort <itemName>` (pull a specific type to you), but **if omitted it uses your held item type and also moves the held item**.
@@ -51,7 +51,7 @@ Use bindings:
 - **`/sort meds`** (alias binding)
 
 ### Saved positions
-- **`/sort set [itemName]`**: Save this type's sort position to your current position (**partial match supported**).
+- **`/sort set [itemName]`**: Save this type's sort position to your current ship position, then move matching ship and cruiser items there (**partial match supported**).
 - **`/ss [itemName]`**: same as `/sort set ...` (**partial match supported**).
 - Ship positions saved with `/ss` are separate from cruiser positions saved with `/css`, even for the same item type. `/sort -b` uses the ship position; `/cs` uses the cruiser position and maximum.
 - **`/sort reset [itemName]`**: Delete saved sort position.
@@ -80,7 +80,7 @@ The cruiser shelf placement feature was developed with reference to [LC-CruiserL
 
 ### Profiles
 
-Profiles save the ship sort settings (including `skippedItems`), ship positions, cruiser positions, and cruiser maximum counts. Changes made after saving a profile are included only when you save it again. The built-in `default` profile is your personal baseline.
+Profiles save the ship sort settings (including `skippedItems`), ship positions, cruiser positions, and cruiser maximum counts. When you switch with `/pu`, changes to the current personal profile are saved automatically before the next one is applied. The built-in `default` profile is your personal baseline. `/ps [name]` creates or updates a snapshot under that name without rewriting the previous profile.
 
 When a host profile is available in a lobby, it appears as a temporary `host` profile. **Sync Host Profile** is enabled by default and automatically applies it. Turn that setting off to keep your personal profile selected; `/pu host` still applies the host profile manually. Leaving the lobby restores your personal selection and live settings.
 

@@ -1,5 +1,9 @@
 ## Changelog
 
+## 0.1.23
+- Save changes to the active personal profile before `/pu` switches to another profile or the temporary host profile. This keeps separate `/ss` positions for the same item type when switching back and forth.
+- `/ss`, `/sort set`, `/sort <item>`, and `/pile` now also collect matching items from the cruiser into the ship.
+
 ## 0.1.22
 - Fixed cruiser shelf items tilting after sorting by applying their item-specific resting rotation relative to the vehicle.
 - Kept `/ss` ship positions and `/css` cruiser positions independent for the same item type. `/sort` now collects eligible cruiser cargo into the ship; `/sort -b` returns types with a saved `/ss` position there even when skipped; `/cs` continues to use `/css` cruiser rules and maximum counts.

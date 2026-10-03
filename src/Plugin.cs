@@ -10,7 +10,7 @@ namespace QuickSort
 {
     // Per ChatCommandAPI README: make this a hard dependency so load order is guaranteed.
     [BepInDependency("baer1.ChatCommandAPI", BepInDependency.DependencyFlags.HardDependency)]
-    [BepInPlugin("pasta.quicksort", "QuickSort", "0.1.22")]
+    [BepInPlugin("pasta.quicksort", "QuickSort", "0.1.23")]
     public class Plugin : BaseUnityPlugin
     {
         private const string CurrentConfigSchemaVersion = "0.1.10";

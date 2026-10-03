@@ -677,10 +677,10 @@ namespace QuickSort
             }
 
             // Explicit /sort <item> should work even if the item type is in the user's skip lists.
-            CategorizeItems(includeSkippedItems: true);
+            CategorizeItems(includeSkippedItems: true, includeCruiserCargo: true);
             if (scrap == null || scrap.Count == 0)
             {
-                error = "No items found in ship";
+                error = "No items found in ship or cruiser";
                 return false;
             }
 
@@ -688,7 +688,7 @@ namespace QuickSort
             Dictionary<string, List<GrabbableObject>> grouped = new Dictionary<string, List<GrabbableObject>>();
             foreach (var item in scrap)
             {
-                if (ShouldSkipExplicitQuery(item)) continue;
+                if (ShouldSkipExplicitQuery(item, allowCruiserCargo: true)) continue;
                 string key = item.Name();
                 if (!grouped.TryGetValue(key, out var list))
                 {
@@ -718,13 +718,14 @@ namespace QuickSort
                 force,
                 announce: true,
                 ignoreSkipLists: true,
-                applyTwoHandedSortYOffset: true
+                applyTwoHandedSortYOffset: true,
+                includeCruiserCargo: true
             ));
             return true;
         }
 
         // /pile [itemName] behavior:
-        // - If itemName is provided: same as /sort <itemName> (fuzzy match against ship items)
+        // - If itemName is provided: same as /sort <itemName> (ship and cruiser items)
         // - If itemName is omitted: use HELD item's type, and still work even if the held item is the only match
         public bool TryStartPileByQueryOrHeld(string? queryOrNull, bool force, out string? error)
         {
@@ -750,15 +751,15 @@ namespace QuickSort
             }
 
             // Explicit gather should work even if the item type is in the user's skip lists.
-            CategorizeItems(includeSkippedItems: true);
+            CategorizeItems(includeSkippedItems: true, includeCruiserCargo: true);
 
-            // Build groups once for name resolution (ship items + held item)
+            // Build groups once for name resolution (ship/cruiser items + held item)
             Dictionary<string, List<GrabbableObject>> grouped = new Dictionary<string, List<GrabbableObject>>();
             if (scrap != null)
             {
                 foreach (var item in scrap)
                 {
-                    if (ShouldSkipExplicitQuery(item)) continue;
+                    if (ShouldSkipExplicitQuery(item, allowCruiserCargo: true)) continue;
                     string key = item.Name();
                     if (!grouped.TryGetValue(key, out var list))
                     {
@@ -783,7 +784,7 @@ namespace QuickSort
 
             if (grouped.Count == 0)
             {
-                error = "No items found in ship";
+                error = "No items found in ship or cruiser";
                 return false;
             }
 
@@ -801,7 +802,9 @@ namespace QuickSort
             }
 
             Vector3 targetWithOffset = new Vector3(targetLocal.x, targetLocal.y - groundYLocal, targetLocal.z);
-            StartCoroutine(MoveItemsOfTypeToPosition(resolved, targetWithOffset, force, announce: true, ignoreSkipLists: true, dropHeldFirst: useHeldType));
+            StartCoroutine(MoveItemsOfTypeToPosition(resolved, targetWithOffset, force,
+                announce: true, ignoreSkipLists: true, dropHeldFirst: useHeldType,
+                includeCruiserCargo: true));
             return true;
         }
 
@@ -817,17 +820,17 @@ namespace QuickSort
             }
 
             // Determine item key:
-            // - If query is provided, resolve it against item types currently present on the ship (fuzzy/partial match).
+            // - If query is provided, resolve it against ship and cruiser item types (fuzzy/partial match).
             // - If omitted, use currently held item type.
             var held = Player.Local != null ? Player.Local.currentlyHeldObjectServer as GrabbableObject : null;
             if (!string.IsNullOrWhiteSpace(queryOrNull))
             {
                 // Explicit /sort set ... should work even if the type is in skip lists.
-                CategorizeItems(includeSkippedItems: true);
+                CategorizeItems(includeSkippedItems: true, includeCruiserCargo: true);
 
                 if ((scrap == null || scrap.Count == 0) && held == null)
                 {
-                    error = "No items found in ship to match that name (hold the item or omit the name).";
+                    error = "No items found in ship or cruiser to match that name (hold the item or omit the name).";
                     return false;
                 }
 
@@ -837,7 +840,7 @@ namespace QuickSort
                 {
                     foreach (var item in scrap)
                     {
-                        if (ShouldSkipExplicitQuery(item)) continue;
+                        if (ShouldSkipExplicitQuery(item, allowCruiserCargo: true)) continue;
                         string key = item.Name();
                         if (!grouped.TryGetValue(key, out var list))
                         {
@@ -902,7 +905,9 @@ namespace QuickSort
 
             Log.ConfirmSound();
             // Also move to the exact saved position (ground-relative offset)
-            StartCoroutine(MoveItemsOfTypeToPosition(resolvedItemKey, savedPos, force, announce: true, ignoreSkipLists: true, dropHeldFirst: useHeldType));
+            StartCoroutine(MoveItemsOfTypeToPosition(resolvedItemKey, savedPos, force,
+                announce: true, ignoreSkipLists: true, dropHeldFirst: useHeldType,
+                includeCruiserCargo: true));
             return true;
         }
 
@@ -1014,7 +1019,8 @@ namespace QuickSort
             bool announce,
             bool ignoreSkipLists = false,
             bool applyTwoHandedSortYOffset = false,
-            bool dropHeldFirst = false
+            bool dropHeldFirst = false,
+            bool includeCruiserCargo = false
         )
         {
             inProgress = true;
@@ -1048,7 +1054,7 @@ namespace QuickSort
                 // IMPORTANT: our cached `scrap` list is usually built BEFORE dropping (in the command handler),
                 // so the just-dropped item may not be present and then won't be moved.
                 // Refresh the scan so the dropped item becomes eligible.
-                CategorizeItems(includeSkippedItems: true);
+                CategorizeItems(includeSkippedItems: true, includeCruiserCargo: includeCruiserCargo);
 
                 // Extra safety: if the dropped item is still not captured by CategorizeItems (timing/flags),
                 // include it explicitly if it matches the target type and is in the ship.
@@ -1065,7 +1071,9 @@ namespace QuickSort
             Dictionary<string, List<GrabbableObject>> groupedItems = new Dictionary<string, List<GrabbableObject>>();
             foreach (GrabbableObject item in scrap)
             {
-                if (ignoreSkipLists ? ShouldSkipExplicitQuery(item) : ShouldSkip(item)) continue;
+                if (ignoreSkipLists
+                    ? ShouldSkipExplicitQuery(item, includeCruiserCargo)
+                    : ShouldSkip(item, includeCruiserCargo)) continue;
                 string name = item.Name();
                 if (!groupedItems.TryGetValue(name, out var list))
                 {
@@ -1148,7 +1156,8 @@ namespace QuickSort
                 );
 
                 Vector3 worldPos = ship.transform.TransformPoint(targetLocal);
-                if (!force && Vector3.Distance(worldPos, item.transform.position) < 0.25f)
+                if (!force && !CruiserSorter.IsCruiserCargo(item) &&
+                    Vector3.Distance(worldPos, item.transform.position) < 0.25f)
                 {
                     continue;
                 }
@@ -1167,7 +1176,9 @@ namespace QuickSort
 
                 if (!inProgress || Player.Local == null) yield break;
 
-                if (!(ignoreSkipLists ? ShouldSkipExplicitQuery(item) : ShouldSkip(item)))
+                if (!(ignoreSkipLists
+                    ? ShouldSkipExplicitQuery(item, includeCruiserCargo)
+                    : ShouldSkip(item, includeCruiserCargo)))
                 {
                     item.floorYRot = -1;
                     if (!MoveUtils.MoveItemOnShipLocal(item, targetLocal, item.floorYRot))
@@ -1260,8 +1271,8 @@ namespace QuickSort
             bool allowCruiserCargo = false)
         {
             if (item == null) return false;
-            // Full ship sorting can collect cruiser cargo as well. Commands that only
-            // query or move a named ship type retain the ordinary ship-only filter.
+            // Ship sorting and explicit gather commands can collect cruiser cargo;
+            // other callers keep the ordinary ship-only filter by default.
             if (CruiserSorter.IsCruiserCargo(item))
                 return allowCruiserCargo;
 
