@@ -1,5 +1,17 @@
 ## Changelog
 
+## 0.1.21
+- Added numbered cruiser shelf zones (`A1`–`C3`, `D1`–`D3`, `E1`–`G3`) with `/css <zone> [itemName] [max]` and `/css zones`. `/css shelf <zone> ...` and CruiserLoader-style `/css <itemName> <max> <zone>` are supported as aliases. Shelf rules are saved and reused by `/csort` and `/cs`.
+- Added direct shelf placement to prevent fall animations from pushing other cargo during sorting.
+- Added cruiser-relative shelf anchoring while items remain on a shelf. Anchoring releases on pickup or removal; full multiplayer physics anchoring requires QuickSort on the item authority/host.
+- Shelf zones support up to 20 items per zone (five slots × four layers), except `D2`, which supports one. Sorting warns when a configured maximum exceeds the zone's physical capacity.
+- Added built-in `default`, temporary lobby `host`, and named `/profile` snapshots for ship and cruiser sorting settings. Optional **Sync Host Profile** automatically uses the host profile and restores personal settings when leaving the lobby.
+- Added temporary `pasta.quicksort.host-recovery.json` recovery data to restore personal settings after an interrupted host-profile session.
+- Added `/ps`, `/pu`, `/pl`, `/pd`, and `/cs` shortcuts for profile management and cruiser sorting.
+- Added `/csort` to arrange cruiser cargo and load matching items from the ship while keeping cruiser cargo excluded from normal ship sorting.
+- Fixed localized item skip matching and preserved user-selected shotgun/ammo skips during config upgrades.
+- Documented the LC-CruiserLoader reference in the English and Korean READMEs.
+
 ## 0.1.16
 - **Fix**
   - `shotgun` and `ammo` are no longer forced back into `skippedItems` after users remove them.

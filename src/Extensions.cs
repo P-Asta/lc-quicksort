@@ -13,7 +13,7 @@ namespace QuickSort
         private static string NormalizeKeyNoAlias(string s)
         {
             if (string.IsNullOrWhiteSpace(s)) return "";
-            return s.ToLower().Replace(" ", "_").Replace("-", "_").Trim();
+            return s.Trim().ToLowerInvariant().Replace(" ", "_").Replace("-", "_");
         }
 
         private static Dictionary<string, string> BuildNameAliases()
@@ -64,8 +64,8 @@ namespace QuickSort
                 ("zap_gun", new[] { "잽건", "zap gun" }),
                 ("radar_booster", new[] { "레이더 부스터", "radar booster", "radar-booster" }),
                 ("spray_paint", new[] { "페인트 스프레이", "스프레이 페인트", "spray paint" }),
-                ("shotgun", new[] { "산탄총" }),
-                ("ammo", new[] { "탄약" }),
+                ("shotgun", new[] { "산탄총", "더블 배럴", "double barrel", "double_barrel" }),
+                ("ammo", new[] { "탄약", "산탄총 탄약", "shotgun shell", "shotgun_shell" }),
                 ("clipboard", new[] { "클립보드" }),
                 ("sticky_note", new[] { "스티커 메모", "스티커메모", "sticky note" }),
             };

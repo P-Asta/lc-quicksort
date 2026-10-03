@@ -1,8 +1,8 @@
 {
   "name": "QuickSort",
-  "version_number": "0.1.16",
+  "version_number": "0.1.21",
   "website_url": "https://github.com/P-Asta/lc-quicksort",
-  "description": "Ship item sorting + quick move commands for Lethal Company.",
+  "description": "Ship and cruiser item sorting with saved profiles for Lethal Company.",
   "dependencies": [
     "BepInEx-BepInExPack-5.4.2305",
     "baer1-ChatCommandAPI-1.1.2"

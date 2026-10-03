@@ -569,6 +569,10 @@ namespace QuickSort
 
                     yield return GrabbableRetry(item);
 
+                    // A lobby disconnect can cancel the sort while GrabbableRetry
+                    // yields. Do not send one more placement after settings restore.
+                    if (!inProgress || Player.Local == null) yield break;
+
                     if (!ShouldSkipFullSort(item, ignoreSkipTokens: (ignoreSkippedItems || ignoreSkipTokensForThisType)))
                     {
                         // Teleport item into place (server will apply via ServerRpc)
@@ -1033,6 +1037,7 @@ namespace QuickSort
             {
                 var heldBeforeDrop = Player.Local.currentlyHeldObjectServer as GrabbableObject;
                 yield return DropHeldItemIfAny(ship);
+                if (!inProgress || Player.Local == null) yield break;
 
                 // IMPORTANT: our cached `scrap` list is usually built BEFORE dropping (in the command handler),
                 // so the just-dropped item may not be present and then won't be moved.
@@ -1154,6 +1159,8 @@ namespace QuickSort
 
                 yield return GrabbableRetry(item);
 
+                if (!inProgress || Player.Local == null) yield break;
+
                 if (!(ignoreSkipLists ? ShouldSkipExplicitQuery(item) : ShouldSkip(item)))
                 {
                     item.floorYRot = -1;
@@ -1242,7 +1249,12 @@ namespace QuickSort
 
         private static bool ShouldIncludeItemByLocation(GrabbableObject item)
         {
-            return item != null && (Ship.ShouldSortAllDetectedItems || item.isInShipRoom);
+            // A cruiser can be parked in or near the ship. Its cargo must remain available
+            // to csort instead of being pulled into the ship's layout by /sort.
+            if (item == null || item.GetComponentInParent<VehicleController>() != null)
+                return false;
+
+            return Ship.ShouldSortAllDetectedItems || item.isInShipRoom;
         }
 
         private IEnumerator GrabbableRetry(GrabbableObject item)
@@ -1405,6 +1417,19 @@ namespace QuickSort
                 .ToList();
         }
 
+        private static bool MatchesSkipToken(GrabbableObject item, string token)
+        {
+            // Localization patches can replace itemName with a translation that is absent
+            // from our alias table. The Item asset name stays stable in that case.
+            string displayKey = ApplyDefaultInputAliases(item.Name());
+            if (displayKey.Contains(token))
+                return true;
+
+            string assetName = item.itemProperties != null ? item.itemProperties.name : "";
+            string assetKey = ApplyDefaultInputAliases(Extensions.NormalizeName(assetName));
+            return assetKey.Contains(token);
+        }
+
         private bool ShouldSkip(GrabbableObject item)
         {
             if (item == null)
@@ -1428,7 +1453,6 @@ namespace QuickSort
                 return true;
             }
 
-            string itemName = item.Name();
             // Apply skip list to ALL items (global).
             string list = skippedItems.Value;
 
@@ -1440,9 +1464,7 @@ namespace QuickSort
                     string token = NormalizeSkipToken(skippedItem);
                     if (string.IsNullOrWhiteSpace(token)) continue;
 
-                    // Match against canonicalized item key as well, to support legacy/internal names.
-                    string itemKey = ApplyDefaultInputAliases(itemName);
-                    if (itemKey.Contains(token))
+                    if (MatchesSkipToken(item, token))
                         return true;
                 }
             }
@@ -1468,8 +1490,6 @@ namespace QuickSort
             if (ignoreSkipTokens)
                 return false;
 
-            string itemName = item.Name();
-
             // Global skip list (substring match). Note: only one list now.
             string list = skippedItems.Value;
 
@@ -1479,7 +1499,7 @@ namespace QuickSort
                 {
                     string token = NormalizeSkipToken(skippedItem);
                     if (string.IsNullOrWhiteSpace(token)) continue;
-                    if (itemName.Contains(token))
+                    if (MatchesSkipToken(item, token))
                         return true;
                 }
             }
@@ -1499,7 +1519,23 @@ namespace QuickSort
             string[] parsedArgs;
             try
             {
-                parsedArgs = Args.Parse(args).ToArray();
+                // Some ChatCommandAPI builds pass a blank or formatting-only token
+                // for a command without arguments. Normalize it for every command.
+                parsedArgs = Args.Parse(args ?? string.Empty)
+                    .Where(arg => arg != null && arg.Any(c =>
+                        !char.IsWhiteSpace(c) &&
+                        char.GetUnicodeCategory(c) != System.Globalization.UnicodeCategory.Format))
+                    .ToArray();
+
+                // Older command parsers may forward the command word itself as the
+                // only argument. Treat that as a bare invocation too.
+                if (parsedArgs.Length == 1)
+                {
+                    string token = parsedArgs[0].TrimStart('/');
+                    if (string.Equals(token, Command, StringComparison.OrdinalIgnoreCase) ||
+                        Aliases.Any(alias => string.Equals(token, alias, StringComparison.OrdinalIgnoreCase)))
+                        parsedArgs = Array.Empty<string>();
+                }
             }
             catch (ChatCommandAPI.InvalidArgumentsException)
             {

@@ -254,8 +254,45 @@ namespace QuickSort
             return data.positions
                 .Where(p => p != null && !string.IsNullOrWhiteSpace(p.item))
                 .Select(p => (Extensions.NormalizeName(p.item), new Vector3(p.x, p.y, p.z)))
+                // Legacy names such as double_barrel and shotgun can now resolve to
+                // one canonical key. The first entry matches TryGet's effective value.
+                .GroupBy(p => p.Item1, StringComparer.Ordinal)
+                .Select(group => group.First())
                 .OrderBy(p => p.Item1)
                 .ToList();
+        }
+
+        // Replace the complete set in one write when switching profiles. A failed load or
+        // invalid entry must not turn an existing position file into an empty one.
+        public static bool ReplaceAll(IEnumerable<(string itemKey, Vector3 shipLocalPos)> positions, out string? error)
+        {
+            error = null;
+            if (positions == null)
+            {
+                error = "Positions are missing.";
+                return false;
+            }
+
+            var entries = new List<PositionEntry>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var position in positions)
+            {
+                string key = Extensions.NormalizeName(position.itemKey);
+                Vector3 point = position.shipLocalPos;
+                if (string.IsNullOrWhiteSpace(key) || !seen.Add(key) ||
+                    float.IsNaN(point.x) || float.IsNaN(point.y) || float.IsNaN(point.z) ||
+                    float.IsInfinity(point.x) || float.IsInfinity(point.y) || float.IsInfinity(point.z))
+                {
+                    error = $"Invalid or duplicate ship position for '{position.itemKey}'.";
+                    return false;
+                }
+                entries.Add(new PositionEntry { item = key, x = point.x, y = point.y, z = point.z });
+            }
+
+            // Check that the current file is readable before replacing it.
+            Load(out error);
+            if (error != null) return false;
+            return Save(new PositionsFile { positions = entries }, out error);
         }
     }
 }

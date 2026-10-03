@@ -10,14 +10,15 @@ namespace QuickSort
 {
     // Per ChatCommandAPI README: make this a hard dependency so load order is guaranteed.
     [BepInDependency("baer1.ChatCommandAPI", BepInDependency.DependencyFlags.HardDependency)]
-    [BepInPlugin("pasta.quicksort", "QuickSort", "0.1.16")]
+    [BepInPlugin("pasta.quicksort", "QuickSort", "0.1.21")]
     public class Plugin : BaseUnityPlugin
     {
-        private const string CurrentConfigSchemaVersion = "0.1.9";
+        private const string CurrentConfigSchemaVersion = "0.1.10";
 
         public static ManualLogSource Log = null!;
         public static ConfigFile config;
         public static ConfigEntry<string> configVersion = null!;
+        public static ConfigEntry<bool> SyncHostProfile = null!;
         public static Plugin Instance { get; private set; }
         private static Harmony harmony;
         public static GameObject sorterObject;
@@ -29,6 +30,10 @@ namespace QuickSort
             Instance = this;
             Log = Logger;
             config = Config;
+            SyncHostProfile = config.Bind("Profiles", "Sync Host Profile", true,
+                "Automatically select a temporary copy of the host's QuickSort profile while in their lobby. When disabled, /pu host still selects it manually.");
+            SyncHostProfile.SettingChanged -= OnSyncHostProfileSettingChanged;
+            SyncHostProfile.SettingChanged += OnSyncHostProfileSettingChanged;
 
             // Config version (for migrations). If the key does not exist, BepInEx will create it with default.
             // IMPORTANT: Bind() will CREATE the key if missing, so we must detect presence BEFORE binding.
@@ -63,35 +68,9 @@ namespace QuickSort
 
             }
 
-            // 0.1.7 migration:
-            // Bugfix: some users ended up with skippedItems == "shotgun, ammo" only (typically created on first run).
-            // If that exact case is detected, reset to the real default list.
-            if (shouldRunMigrations && (!hadConfigVersionKey || IsVersionLessThan(currentVer, "0.1.7")))
-            {
-                if (config.TryGetEntry<string>(new ConfigDefinition("Sorter", "skippedItems"), out var existingSkipped))
-                {
-                    if (IsOnlyShotgunAmmo(existingSkipped.Value))
-                    {
-                        existingSkipped.Value = Sorter.DefaultSkippedItems;
-                        needsSave = true;
-                    }
-                }
-            }
-
-            // 0.1.9 migration:
-            // Shotgun and ammo should not be forced into skippedItems. Older migrations/defaults added them,
-            // which made them reappear after users removed them.
-            if (shouldRunMigrations && (!hadConfigVersionKey || IsVersionLessThan(currentVer, "0.1.9")))
-            {
-                var skippedItems = config.Bind<string>("Sorter", "skippedItems", Sorter.DefaultSkippedItems,
-                    "Global skip list (comma-separated, substring match). Applies to all grabbable items.");
-                string migratedSkip = RemoveTokensFromCommaList(skippedItems.Value, "shotgun", "ammo", "double_barrel", "shotgun_shell");
-                if (!string.Equals(migratedSkip, skippedItems.Value, System.StringComparison.Ordinal))
-                {
-                    skippedItems.Value = migratedSkip;
-                    needsSave = true;
-                }
-            }
+            // Preserve user-edited skippedItems across schema upgrades. Older migrations removed
+            // shotgun/ammo or reset a list containing only those two entries, which could erase
+            // intentional skip selections.
 
             // After all migrations, record current schema version for existing configs.
             if (shouldRunMigrations && (!string.Equals(configVersion.Value, CurrentConfigSchemaVersion, System.StringComparison.Ordinal)))
@@ -109,6 +88,8 @@ namespace QuickSort
             // Create shortcuts file (user-editable) early so it's easy to find in BepInEx/config
             SortShortcuts.EnsureFileExists();
             SortPositions.EnsureFileExists();
+            CruiserPositions.EnsureFileExists();
+            SortProfiles.EnsureFileExists();
 
             // Initialize Harmony patches
             harmony = new Harmony("pasta.quicksort");
@@ -116,6 +97,7 @@ namespace QuickSort
             harmony.PatchAll(typeof(Startup));
             harmony.PatchAll(typeof(GrabPatch));
             harmony.PatchAll(typeof(InteractionLockPatch));
+            harmony.PatchAll(typeof(CruiserShelfAnchorPatch));
 
             // Register command immediately (ChatCommandAPI should be loaded by now)
             try
@@ -137,9 +119,14 @@ namespace QuickSort
                 {
                     sorterObject = new GameObject("PastaSorter");
                     sorterObject.AddComponent<Sorter>();
+                    sorterObject.AddComponent<ProfileNetworkBehaviour>();
                     Object.DontDestroyOnLoad(sorterObject);
                     QuickSort.Log.Info("Sorter initialized in Awake");
                 }
+                else if (sorterObject.GetComponent<ProfileNetworkBehaviour>() == null)
+                    sorterObject.AddComponent<ProfileNetworkBehaviour>();
+                SortProfiles.RecoverInterruptedHostSession();
+                SortProfiles.EnsureDefaultProfile();
             }
             catch (System.Exception e)
             {
@@ -178,6 +165,12 @@ namespace QuickSort
         private void OnApplicationQuit()
         {
             applicationIsQuitting = true;
+            ProfileNetwork.EndSession();
+        }
+
+        private static void OnSyncHostProfileSettingChanged(object sender, System.EventArgs args)
+        {
+            SortProfiles.OnSyncHostProfileChanged();
         }
 
         private static bool IsVersionLessThan(string a, string b)
@@ -208,65 +201,6 @@ namespace QuickSort
             return false;
         }
 
-        private static string RemoveTokensFromCommaList(string? list, params string[] tokensToRemove)
-        {
-            // Normalize tokens to item-key style (underscores) and de-dupe.
-            var tokens = new System.Collections.Generic.List<string>();
-            var seen = new System.Collections.Generic.HashSet<string>();
-            var remove = new System.Collections.Generic.HashSet<string>();
-
-            string Normalize(string raw)
-            {
-                string t = (raw ?? "").Trim();
-                if (string.IsNullOrWhiteSpace(t)) return "";
-                t = QuickSort.Extensions.NormalizeName(t).Trim('_');
-                return string.IsNullOrWhiteSpace(t) ? "" : t;
-            }
-
-            if (tokensToRemove != null)
-            {
-                foreach (var raw in tokensToRemove)
-                {
-                    string t = Normalize(raw);
-                    if (!string.IsNullOrWhiteSpace(t))
-                        remove.Add(t);
-                }
-            }
-
-            if (!string.IsNullOrWhiteSpace(list))
-            {
-                foreach (var part in list.Split(','))
-                {
-                    string t = Normalize(part);
-                    if (string.IsNullOrWhiteSpace(t) || remove.Contains(t)) continue;
-                    if (seen.Add(t)) tokens.Add(t);
-                }
-            }
-
-            return string.Join(", ", tokens);
-        }
-
-        private static bool IsOnlyShotgunAmmo(string? list)
-        {
-            var seen = new System.Collections.Generic.HashSet<string>();
-
-            void Add(string raw)
-            {
-                string t = (raw ?? "").Trim();
-                if (string.IsNullOrWhiteSpace(t)) return;
-                t = QuickSort.Extensions.NormalizeName(t).Trim('_');
-                if (string.IsNullOrWhiteSpace(t)) return;
-                seen.Add(t);
-            }
-
-            if (!string.IsNullOrWhiteSpace(list))
-            {
-                foreach (var part in list.Split(','))
-                    Add(part);
-            }
-
-            return seen.Count == 2 && seen.Contains("shotgun") && seen.Contains("ammo");
-        }
     }
 
     public static class Startup
@@ -286,6 +220,13 @@ namespace QuickSort
             new QuickSort.SortBindingsListCommand();
             new QuickSort.SortSkipCommand();
             new QuickSort.PileCommand();
+            new QuickSort.CruiserSetCommand();
+            new QuickSort.CruiserSortCommand();
+            new QuickSort.ProfileCommand();
+            new QuickSort.ProfileSaveShortcutCommand();
+            new QuickSort.ProfileUseShortcutCommand();
+            new QuickSort.ProfileListShortcutCommand();
+            new QuickSort.ProfileDeleteShortcutCommand();
             commandRegistered = true;
         }
 
@@ -310,14 +251,25 @@ namespace QuickSort
                 }
             }
 
-            if (Plugin.sorterObject != null)
+            if (Plugin.sorterObject == null)
             {
-                Object.Destroy(Plugin.sorterObject);
+                Plugin.sorterObject = new GameObject("PastaSorter");
+                Plugin.sorterObject.AddComponent<Sorter>();
+                Object.DontDestroyOnLoad(Plugin.sorterObject);
             }
+            else if (Plugin.sorterObject.GetComponent<Sorter>() == null)
+                Plugin.sorterObject.AddComponent<Sorter>();
+            if (Plugin.sorterObject.GetComponent<ProfileNetworkBehaviour>() == null)
+                Plugin.sorterObject.AddComponent<ProfileNetworkBehaviour>();
+            SortProfiles.EnsureDefaultProfile();
+            ProfileNetwork.OnLocalPlayerCreated();
+        }
 
-            Plugin.sorterObject = new GameObject("PastaSorter");
-            Plugin.sorterObject.AddComponent<Sorter>();
-            Object.DontDestroyOnLoad(Plugin.sorterObject);
+        [HarmonyPatch(typeof(GameNetworkManager), nameof(GameNetworkManager.Disconnect))]
+        [HarmonyPrefix]
+        private static void OnLobbyDisconnect()
+        {
+            ProfileNetwork.EndSession();
         }
     }
 }
