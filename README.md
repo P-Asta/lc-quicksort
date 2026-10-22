@@ -65,6 +65,7 @@ Use bindings:
 
 - **`/css <zone> [itemName] [max]`**: While on or near the cruiser, save a shelf zone for an item type and immediately place matching items there, up to the maximum. Omit the item name to use the held item, or `max` to use **10** (allowed range: 1–10000). For example, `/css A2 shotgun` places up to 10 shotguns on shelf zone A2; `/css A2 shotgun 2` places up to two.
 - **`/css [itemName] [max]`**: While standing on the cruiser, save your current position instead of a shelf zone and immediately place matching items there. A matching item in your hand is also placed if there is room. The item name defaults to the held item; `max` defaults to **10**.
+- **`/css test`**: While on or near the cruiser, move its loose scrap to the ship's rejoin item area. The target is the center of the game's fallback area at the second player spawn position, with the vanilla Y (+0.5 m) and Z (+2 m) offsets; this uses the center of vanilla's randomized X offset. Saved cruiser positions are unchanged.
 - **Alternative shelf forms**: `/css shelf A2 shotgun 2` and CruiserLoader-style `/css shotgun 2 A2` both save the same shelf rule as `/css A2 shotgun 2`.
 - **`/css zones`**: List the available shelf zones. A, B, C, E, F, and G each have three shelf levels (`A1`–`A3`, etc.); `D1`–`D3` are the center spots. `D2` is the radar booster spot and holds one item. See [CruiserLoader's zone layout image](https://github.com/veber01/LC-CruiserLoader/blob/main/ZoneLayout.png) to choose a zone.
 - **`/css list`**: Show saved cruiser positions and maximum counts.
