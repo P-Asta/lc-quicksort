@@ -190,9 +190,8 @@ namespace QuickSort
         internal static bool TryStartScrapPileAtShipRejoinLocation(out string? error)
         {
             error = null;
-            if (!TryGetPlayerPosition(out var cruiser, out _, out error) || cruiser == null)
+            if (!CheckCruiserReady(out var cruiser, out error) || cruiser == null)
                 return false;
-            if (!CheckCruiserReady(cruiser, out error)) return false;
 
             var ship = GameObject.Find("Environment/HangarShip");
             if (ship == null)
@@ -807,7 +806,7 @@ namespace QuickSort
             {
                 if (args.Length != 1)
                 {
-                    error = "Usage: /css test (stand near the cruiser; scrap goes to the ship's rejoin item area).";
+                    error = "Usage: /css test (gathers cruiser scrap to the ship's rejoin item area).";
                     return false;
                 }
                 return CruiserSorter.TryStartScrapPileAtShipRejoinLocation(out error);
