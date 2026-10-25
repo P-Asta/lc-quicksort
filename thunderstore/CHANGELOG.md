@@ -1,5 +1,11 @@
 ## Changelog
 
+## 0.1.25
+- Rebuilt package. No functional changes.
+
+## 0.1.24
+- `/csort` and `/cs` now also collect matching items outside the ship in orbit or at the Company (Gordion), just like `/sort`, while preserving saved maximum counts and shelf capacity limits.
+
 ## 0.1.23
 - Save changes to the active personal profile before `/pu` switches to another profile or the temporary host profile. This keeps separate `/ss` positions for the same item type when switching back and forth.
 - `/ss`, `/sort set`, `/sort <item>`, and `/pile` now also collect matching items from the cruiser into the ship.

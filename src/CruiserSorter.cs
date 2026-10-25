@@ -634,10 +634,12 @@ namespace QuickSort
                 GameObject? ship = GameObject.Find("Environment/HangarShip");
                 var cruiserItems = CruiserCargoItems(cruiser)
                     .Where(item => item != droppedHeld && Eligible(item)).ToList();
-                var shipItems = UnityEngine.Object.FindObjectsOfType<GrabbableObject>()
+                // Match /sort's expanded collection range in orbit and at the company.
+                bool includeOutsideItems = Ship.ShouldSortAllDetectedItems;
+                var sourceItems = UnityEngine.Object.FindObjectsOfType<GrabbableObject>()
                     .Where(item => item != droppedHeld && Eligible(item) &&
                         !IsCruiserCargo(item) &&
-                        IsShipCargo(item, ship))
+                        (includeOutsideItems || IsShipCargo(item, ship)))
                     .ToList();
 
                 foreach (var rule in rules)
@@ -662,7 +664,7 @@ namespace QuickSort
                     var already = cruiserItems.Where(item => item.Name() == rule.itemKey)
                         .Take(allowed).ToList();
                     int needed = allowed - already.Count;
-                    var incoming = shipItems.Where(item => item.Name() == rule.itemKey).Take(needed).ToList();
+                    var incoming = sourceItems.Where(item => item.Name() == rule.itemKey).Take(needed).ToList();
                     var selected = already.Concat(incoming).ToList();
                     for (int index = 0; index < selected.Count; index++)
                     {
