@@ -1,5 +1,8 @@
 ## Changelog
 
+### 0.1.26
+- Added `/css test` to move loose cruiser scrap to the center of the game's ship rejoin fallback area.
+
 ### 0.1.25
 - Rebuilt package. No functional changes.
 

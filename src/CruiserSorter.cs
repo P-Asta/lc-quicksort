@@ -187,6 +187,33 @@ namespace QuickSort
             return StartSort(cruiser, rules, dropMatchingHeld: false, out error);
         }
 
+        internal static bool TryStartScrapPileAtShipRejoinLocation(out string? error)
+        {
+            error = null;
+            if (!CheckCruiserReady(out var cruiser, out error) || cruiser == null)
+                return false;
+
+            var ship = GameObject.Find("Environment/HangarShip");
+            if (ship == null)
+            {
+                error = "Ship not found; cannot locate its rejoin item area.";
+                return false;
+            }
+            var spawnPositions = StartOfRound.Instance?.playerSpawnPositions;
+            if (spawnPositions == null || spawnPositions.Length <= 1 || spawnPositions[1] == null)
+            {
+                error = "Ship rejoin item area is not available yet.";
+                return false;
+            }
+
+            // LoadShipGrabbableItems moves saved items outside shipBounds to
+            // playerSpawnPositions[1] plus X [-0.7, 0.7], Y +0.5, and Z +2.
+            // Use the center of that vanilla fallback area for one shared pile.
+            Vector3 targetWorldPosition = spawnPositions[1].position + new Vector3(0f, 0.5f, 2f);
+            Vector3 targetShipLocalPosition = ship.transform.InverseTransformPoint(targetWorldPosition);
+            return StartScrapPileSort(cruiser, targetShipLocalPosition, out error);
+        }
+
         internal static bool TryStartRule(VehicleController cruiser, string itemKey, Vector3 localPosition,
             int maximum, out string? error)
         {
@@ -223,6 +250,45 @@ namespace QuickSort
             {
                 Sorter.inProgress = false;
                 error = "Unable to start cruiser sort: " + e.Message;
+                QuickSort.Log.Error(error);
+                return false;
+            }
+        }
+
+        private static bool StartScrapPileSort(VehicleController cruiser, Vector3 targetShipLocalPosition,
+            out string? error)
+        {
+            if (Sorter.inProgress)
+            {
+                error = "Operation in progress.";
+                return false;
+            }
+            var scrap = CruiserCargoItems(cruiser)
+                .Where(item => Eligible(item) && item.itemProperties.isScrap)
+                .ToList();
+            if (scrap.Count == 0)
+            {
+                error = "No loose scrap found on the cruiser.";
+                return false;
+            }
+            if (!TryGetSortHost(out var host, out error) || host == null) return false;
+
+            Sorter.inProgress = true;
+            try
+            {
+                if (host.StartCoroutine(SortScrapPile(cruiser, targetShipLocalPosition, scrap)) == null)
+                {
+                    Sorter.inProgress = false;
+                    error = "Unable to start cruiser scrap gather.";
+                    return false;
+                }
+                CommandChat.Print($"Gathering {scrap.Count} cruiser scrap item(s) at the ship's rejoin item area.");
+                return true;
+            }
+            catch (Exception e)
+            {
+                Sorter.inProgress = false;
+                error = "Unable to start cruiser scrap gather: " + e.Message;
                 QuickSort.Log.Error(error);
                 return false;
             }
@@ -690,6 +756,36 @@ namespace QuickSort
                         $" Shelf zones are limited to {MaxShelfZoneSlots} items each (D2: 1)." : ""));
             }
         }
+
+        private static IEnumerator SortScrapPile(VehicleController cruiser, Vector3 targetShipLocalPosition,
+            List<GrabbableObject> scrap)
+        {
+            int moved = 0;
+            int failed = 0;
+            try
+            {
+                for (int index = 0; index < scrap.Count; index++)
+                {
+                    if (!Sorter.inProgress || cruiser == null || Player.Local == null ||
+                        (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame))
+                        yield break;
+
+                    GrabbableObject item = scrap[index];
+                    if (Eligible(item) && item.itemProperties.isScrap &&
+                        MoveUtils.MoveItemOnShipLocal(item, targetShipLocalPosition, item.floorYRot))
+                        moved++;
+                    else
+                        failed++;
+                    yield return null;
+                }
+            }
+            finally
+            {
+                Sorter.inProgress = false;
+                CommandChat.Print($"Cruiser scrap gather finished: moved {moved} item(s) to the ship" +
+                    (failed > 0 ? $", skipped {failed}." : "."));
+            }
+        }
     }
 
     public sealed class CruiserSetCommand : QuickSortCommand
@@ -697,7 +793,7 @@ namespace QuickSort
         public override string Name => "css";
         public override string Description =>
             "Save a cruiser position, then immediately place that item type up to its maximum.\n" +
-            "Usage: /css [item] [max=10], /css <zone> [item] [max=10], " +
+            "Usage: /css test, /css [item] [max=10], /css <zone> [item] [max=10], " +
             "/css zones, /css list, /css reset [item]";
 
         protected override bool InvokeParsed(string[] args, out string? error)
@@ -707,6 +803,15 @@ namespace QuickSort
             {
                 CommandChat.Print(Description);
                 return true;
+            }
+            if (args.Length > 0 && string.Equals(args[0], "test", StringComparison.OrdinalIgnoreCase))
+            {
+                if (args.Length != 1)
+                {
+                    error = "Usage: /css test (gathers cruiser scrap to the ship's rejoin item area).";
+                    return false;
+                }
+                return CruiserSorter.TryStartScrapPileAtShipRejoinLocation(out error);
             }
             if (args.Length > 0 && string.Equals(args[0], "list", StringComparison.OrdinalIgnoreCase))
             {
